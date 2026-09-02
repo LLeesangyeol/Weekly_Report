@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -35,6 +35,12 @@ def init_db() -> None:
 
     get_settings().ensure_directories()
     Base.metadata.create_all(bind=engine)
+    if engine.url.drivername.startswith("sqlite"):
+        columns = {column["name"] for column in inspect(engine).get_columns("reports")}
+        if "batch_id" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE reports ADD COLUMN batch_id VARCHAR(36)"))
+                connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_batch_id ON reports (batch_id)"))
 
 
 def get_db() -> Generator[Session, None, None]:

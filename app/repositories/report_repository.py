@@ -23,6 +23,7 @@ class ReportRepository:
         content_type: str,
         source_type: str,
         model_name: str,
+        batch_id: str | None = None,
         report_date: date | None = None,
         department: str | None = None,
         author: str | None = None,
@@ -35,6 +36,7 @@ class ReportRepository:
             content_type=content_type,
             source_type=source_type,
             model_name=model_name,
+            batch_id=batch_id,
             report_date=report_date,
             department=department,
             author=author,
@@ -50,6 +52,10 @@ class ReportRepository:
 
     def list(self, *, limit: int = 100, offset: int = 0) -> list[Report]:
         statement = select(Report).order_by(desc(Report.created_at)).limit(limit).offset(offset)
+        return list(self.session.scalars(statement))
+
+    def list_batch(self, batch_id: str) -> list[Report]:
+        statement = select(Report).where(Report.batch_id == batch_id).order_by(Report.author, Report.id)
         return list(self.session.scalars(statement))
 
     def set_status(self, report: Report, status: ReportStatus, error: str | None = None) -> None:

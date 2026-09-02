@@ -39,10 +39,9 @@ async def test_ollama_api_mock(settings):
         assert payload["stream"] is False
         assert payload["model"] == "test-model"
         assert payload["options"]["temperature"] == 0.1
-        if len(calls) == 1:
-            content = json.dumps(STRUCTURED, ensure_ascii=False)
-        else:
-            content = "## 금주 완료 업무\n- 테스트 완료"
+        assert payload["think"] is False
+        assert payload["format"] == "json"
+        content = json.dumps(STRUCTURED, ensure_ascii=False)
         return httpx.Response(200, json={"message": {"content": content}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -52,7 +51,8 @@ async def test_ollama_api_mock(settings):
     assert structured.completed_work == ["테스트 완료"]
     assert summary.startswith("## 금주 완료 업무")
     assert "## 주요 일정 및 수치" in summary
-    assert len(calls) == 2
+    assert "월(31):" not in summary  # no schedule exists in this fixture
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio

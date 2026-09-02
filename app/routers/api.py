@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.database import SessionLocal, get_db
 from app.repositories.report_repository import ReportRepository
-from app.schemas import ReportCreated, ReportListItem, ReportRead, ReportStatusRead
+from app.schemas import BatchCreated, BatchReportCreated, ReportCreated, ReportListItem, ReportRead, ReportStatusRead
 from app.services.report_service import ReportProcessor
 from app.services.storage_service import InsufficientStorageError, StorageService, UploadValidationError
 
@@ -77,6 +78,62 @@ async def upload_report(
         raise
     background_tasks.add_task(processor.process, report.id)
     return ReportCreated(id=report.id, status=report.status, status_url=f"/api/reports/{report.id}/status")
+
+
+@router.post("/reports/batch", response_model=BatchCreated, status_code=status.HTTP_202_ACCEPTED)
+async def upload_report_batch(
+    background_tasks: BackgroundTasks,
+    files: Annotated[list[UploadFile], File(...)],
+    author: Annotated[str | None, Form()] = None,
+    department: Annotated[str | None, Form()] = None,
+    report_date: Annotated[str | None, Form()] = None,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    processor: ReportProcessor = Depends(get_report_processor),
+) -> BatchCreated:
+    if not 1 <= len(files) <= 10:
+        raise HTTPException(status_code=400, detail="한 번에 1~10개의 보고서만 업로드할 수 있습니다.")
+    parsed_date = None
+    if report_date and report_date.strip():
+        try:
+            parsed_date = date.fromisoformat(report_date.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="기준일은 YYYY-MM-DD 형식이어야 합니다.") from exc
+    clean_author = _clean_optional(author, "작성자")
+    clean_department = _clean_optional(department, "부서")
+    batch_id = str(uuid4())
+    storage = StorageService(settings)
+    created = []
+    saved_paths: list[Path] = []
+    try:
+        for upload in files:
+            stored = await storage.save(upload)
+            saved_paths.append(stored.path)
+            report = ReportRepository(db).create(
+                original_filename=stored.original_filename,
+                stored_filename=stored.stored_filename,
+                file_path=str(stored.path),
+                file_size=stored.size,
+                content_type=stored.content_type,
+                source_type=stored.source_type,
+                model_name=settings.ollama_model,
+                batch_id=batch_id,
+                report_date=parsed_date,
+                department=clean_department,
+                author=clean_author,
+            )
+            created.append(report)
+            background_tasks.add_task(processor.process, report.id)
+    except (UploadValidationError, InsufficientStorageError) as exc:
+        for path in saved_paths:
+            path.unlink(missing_ok=True)
+        status_code = 507 if isinstance(exc, InsufficientStorageError) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return BatchCreated(
+        batch_id=batch_id,
+        reports=[BatchReportCreated(id=report.id, status=report.status, status_url=f"/api/reports/{report.id}/status") for report in created],
+        team_summary_url=f"/team-summary/{batch_id}",
+    )
 
 
 @router.get("/reports", response_model=list[ReportListItem])

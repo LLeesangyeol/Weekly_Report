@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}팀 주간업무 요약{% endblock %}
+{% block content %}
+<section class="panel team-header">
+  <h1>팀 주간업무 한눈에 보기</h1>
+  <p class="hint">동일 업로드 묶음의 최대 10명 보고서를 완료 업무와 금주 예정 업무 중심으로 비교합니다.</p>
+</section>
+<section class="team-grid">
+{% for report in reports %}
+  <article class="team-card">
+    <div class="title-row"><div><h2>{{ report.author or report.original_filename }}</h2><p>{{ report.department or '-' }} · {{ report.report_date or '-' }}</p></div><span class="badge {{ report.status }}">{{ report.status }}</span></div>
+    {% if report.status == 'completed' %}
+      <section><h3>지난주 완료 업무</h3><ul>{% for item in report.completed_work %}<li>{{ item|display_item }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
+      <section><h3>금주 예정 업무</h3><ul>{% for item in report.planned_work %}<li>{{ item|display_item }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
+      {% if report.issues %}<section class="issue"><h3>문제점 / 지원 필요</h3><ul>{% for item in report.issues %}<li>{{ item|display_item }}</li>{% endfor %}</ul></section>{% endif %}
+    {% elif report.status == 'failed' %}<p class="error-text">{{ report.error_message }}</p>
+    {% else %}<p class="empty">문서를 처리하고 있습니다. 잠시 후 자동으로 새로고침됩니다.</p>{% endif %}
+    <a href="/reports/{{ report.id }}">개별 상세 보기</a>
+  </article>
+{% endfor %}
+</section>
+{% if reports|selectattr('status', 'in', ['uploaded', 'processing'])|list %}<script>window.setTimeout(() => window.location.reload(), 2000);</script>{% endif %}
+{% endblock %}

@@ -15,7 +15,7 @@
 </section>
 
 {% macro item_list(title, items) %}
-<section class="panel"><h2>{{ title }}</h2><ul>{% for item in items %}<li>{{ item if item is string else item|tojson }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
+<section class="panel"><h2>{{ title }}</h2><ul>{% for item in items %}<li>{{ item|display_item }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
 {% endmacro %}
 <div class="two-col">
   {{ item_list('예정 업무', report.planned_work) }}

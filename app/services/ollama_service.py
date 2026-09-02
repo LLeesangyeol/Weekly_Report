@@ -96,16 +96,14 @@ def _deduplicate(items: list[Any]) -> list[Any]:
 STRUCTURE_SYSTEM_PROMPT = """당신은 사내 주간업무일지 구조화 도우미다.
 문서에 실제로 있는 정보만 사용하고 추측하거나 새 사실을 만들지 마라.
 예정 업무와 실적 업무를 구분하고, 내용이 없으면 빈 배열을 사용하라.
+특히 '[금주 예정 업무]' 아래 내용은 planned_work에만, '[금주 업무 실적]' 아래 내용은 completed_work에만 넣어라.
+각 업무 영역의 모든 글머리표와 하위 항목을 빠뜨리지 말고 하나의 업무 객체 또는 문자열에 함께 보존하라.
+'[주간 일정 계획표]'은 weekly_schedule에 요일과 계획을 함께 보존하라.
+결재란, 매출·목표·현재·진행률 같은 빈 서식 항목은 업무로 만들지 마라.
+next_week_plan은 문서에 차주 계획이 명시된 경우에만 채워라. 금주 예정 업무를 차주 계획으로 옮기지 마라.
+issues는 명시된 문제·차질·지원 필요사항만 넣고, 없으면 빈 배열을 반환하라.
 반드시 아래 키를 모두 가진 JSON 객체만 출력하라. 마크다운이나 설명을 붙이지 마라.
 report_date, department, author, planned_work, completed_work, weekly_schedule, issues, next_week_plan"""
-
-SUMMARY_SYSTEM_PROMPT = """주어진 구조화 데이터를 중복 없이 간결한 한국어 주간업무 요약으로 작성하라.
-반드시 아래 다섯 제목을 순서대로 사용하고, 없는 내용은 '- 없음'으로 표시하라.
-## 금주 완료 업무
-## 진행 중인 업무
-## 문제점 및 지원 필요사항
-## 차주 계획
-## 주요 일정 및 수치"""
 
 SUMMARY_HEADINGS = (
     "## 금주 완료 업무",
@@ -116,14 +114,22 @@ SUMMARY_HEADINGS = (
 )
 
 
-def _fallback_summary(structured: StructuredReport) -> str:
+def render_summary(structured: StructuredReport) -> str:
+    """Render every structured item without another lossy LLM summarization pass."""
+    def display(item: Any) -> str:
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            day = item.get("day")
+            work = item.get("work") or item.get("schedule")
+            if day and work:
+                return f"{day}: {work}"
+        return json.dumps(item, ensure_ascii=False, sort_keys=True)
+
     def section(title: str, items: list[Any]) -> str:
         if not items:
             return f"{title}\n\n- 없음"
-        lines = [
-            item if isinstance(item, str) else json.dumps(item, ensure_ascii=False, sort_keys=True)
-            for item in items
-        ]
+        lines = [display(item) for item in items]
         return title + "\n\n" + "\n".join(f"- {line}" for line in lines)
 
     return "\n\n".join((
@@ -140,13 +146,16 @@ class OllamaService:
         self.settings = settings
         self._client = client
 
-    async def _chat(self, messages: list[dict[str, str]]) -> str:
+    async def _chat(self, messages: list[dict[str, str]], *, json_mode: bool = False) -> str:
         payload = {
             "model": self.settings.ollama_model,
             "stream": False,
+            "think": False,
             "messages": messages,
             "options": {"temperature": 0.1},
         }
+        if json_mode:
+            payload["format"] = "json"
         async with _llm_semaphore:
             owns_client = self._client is None
             client = self._client or httpx.AsyncClient(timeout=self.settings.ollama_timeout_seconds)
@@ -210,7 +219,7 @@ class OllamaService:
             {"role": "system", "content": STRUCTURE_SYSTEM_PROMPT},
             {"role": "user", "content": f"사용자 입력 메타데이터(참고용): {hints}\n\n문서:\n{source}"},
         ]
-        first = await self._chat(messages)
+        first = await self._chat(messages, json_mode=True)
         try:
             data = parse_json_response(first)
             structured = StructuredReport.model_validate(data)
@@ -221,7 +230,7 @@ class OllamaService:
                     "role": "user",
                     "content": "다음 응답의 내용은 바꾸지 말고 요구된 JSON 객체 형식으로만 한 번 수정하라:\n" + first,
                 },
-            ])
+            ], json_mode=True)
             try:
                 structured = StructuredReport.model_validate(parse_json_response(repaired))
             except (OllamaJsonError, ValidationError) as exc:
@@ -231,10 +240,4 @@ class OllamaService:
         return structured
 
     async def summarize(self, structured: StructuredReport) -> str:
-        summary = (await self._chat([
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": structured.model_dump_json(indent=2)},
-        ])).strip()
-        if not all(heading in summary for heading in SUMMARY_HEADINGS):
-            return _fallback_summary(structured)
-        return summary
+        return render_summary(structured)

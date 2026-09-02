@@ -74,3 +74,15 @@ class ReportCreated(BaseModel):
     id: int
     status: str
     status_url: str
+
+
+class BatchReportCreated(BaseModel):
+    id: int
+    status: str
+    status_url: str
+
+
+class BatchCreated(BaseModel):
+    batch_id: str
+    reports: list[BatchReportCreated]
+    team_summary_url: str

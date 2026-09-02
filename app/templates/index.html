@@ -2,16 +2,16 @@
 {% block title %}업로드 · 주간업무일지{% endblock %}
 {% block content %}
 <section class="panel upload-panel">
-  <h1>주간업무일지 업로드</h1>
+  <h1>팀 주간업무일지 업로드</h1>
   <form id="upload-form" enctype="multipart/form-data">
-    <label>파일 <input type="file" name="file" accept=".ppt,.pptx,.pdf" required></label>
+    <label>보고서 파일 <input type="file" name="files" accept=".ppt,.pptx,.pdf" multiple required></label>
     <div class="grid">
       <label>작성자 <input type="text" name="author" maxlength="200"></label>
       <label>부서 <input type="text" name="department" maxlength="200"></label>
       <label>기준일 <input type="date" name="report_date"></label>
     </div>
-    <p class="hint">PPT, PPTX, PDF · 기본 최대 30MB</p>
-    <button type="submit">업로드 및 처리</button>
+    <p class="hint">PPT, PPTX, PDF · 파일당 기본 최대 30MB · 한 번에 최대 10명</p>
+    <button type="submit">팀 일지 업로드 및 처리</button>
   </form>
   <div id="upload-status" class="status" aria-live="polite"></div>
 </section>
@@ -41,21 +41,22 @@ const statusBox = document.getElementById('upload-status');
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   statusBox.textContent = '업로드 중…';
-  const response = await fetch('/api/reports', {method: 'POST', body: new FormData(form)});
+  const files = form.querySelector('[name="files"]').files;
+  if (files.length > 10) { statusBox.textContent = '한 번에 최대 10개만 업로드할 수 있습니다.'; return; }
+  const response = await fetch('/api/reports/batch', {method: 'POST', body: new FormData(form)});
   const body = await response.json().catch(() => ({}));
   if (!response.ok) { statusBox.textContent = body.detail || '업로드에 실패했습니다.'; return; }
-  statusBox.textContent = `보고서 #${body.id} 처리 대기 중…`;
-  poll(body.id);
+  statusBox.textContent = `${body.reports.length}개 보고서 처리 대기 중…`;
+  pollBatch(body);
 });
-async function poll(id) {
-  const response = await fetch(`/api/reports/${id}/status`);
-  const body = await response.json();
-  statusBox.textContent = `보고서 #${id}: ${body.status}`;
-  if (body.status === 'completed' || body.status === 'failed') {
-    window.location.assign(`/reports/${id}`);
-  } else {
-    window.setTimeout(() => poll(id), 1500);
-  }
+async function pollBatch(batch) {
+  const statuses = await Promise.all(batch.reports.map(async report => (await fetch(report.status_url)).json()));
+  const completed = statuses.filter(item => item.status === 'completed').length;
+  const failed = statuses.filter(item => item.status === 'failed').length;
+  statusBox.textContent = `처리 완료 ${completed}/${statuses.length}${failed ? ` · 실패 ${failed}` : ''}`;
+  if (statuses.every(item => item.status === 'completed' || item.status === 'failed')) {
+    window.location.assign(batch.team_summary_url);
+  } else window.setTimeout(() => pollBatch(batch), 1500);
 }
 </script>
 {% endblock %}

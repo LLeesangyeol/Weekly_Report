@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from pathlib import Path
 from typing import Callable
@@ -13,6 +14,7 @@ from app.models import ReportStatus
 from app.repositories.report_repository import ReportRepository
 from app.services.document_service import DocumentService
 from app.services.ollama_service import OllamaService
+from app.services.weekly_template_service import parse_weekly_report_template
 
 
 logger = logging.getLogger(__name__)
@@ -24,7 +26,13 @@ def _parse_date(value: str | None) -> date | None:
     try:
         return date.fromisoformat(value)
     except ValueError:
-        return None
+        matched = re.fullmatch(r"\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*", value)
+        if not matched:
+            return None
+        try:
+            return date(*(int(part) for part in matched.groups()))
+        except ValueError:
+            return None
 
 
 class ReportProcessor:
@@ -52,12 +60,14 @@ class ReportProcessor:
             try:
                 # Deliberately never log extracted document text or LLM prompts.
                 extracted = self.document_service.extract(Path(report.file_path))
-                structured = await self.ollama_service.structure_document(
-                    extracted,
-                    report_date=report.report_date.isoformat() if report.report_date else None,
-                    department=report.department,
-                    author=report.author,
-                )
+                structured = parse_weekly_report_template(extracted)
+                if structured is None:
+                    structured = await self.ollama_service.structure_document(
+                        extracted,
+                        report_date=report.report_date.isoformat() if report.report_date else None,
+                        department=report.department,
+                        author=report.author,
+                    )
                 summary = await self.ollama_service.summarize(structured)
                 values = structured.model_dump()
                 repository.complete(report, {

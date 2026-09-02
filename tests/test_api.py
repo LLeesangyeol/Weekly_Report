@@ -23,6 +23,35 @@ def test_upload_api_creates_record(client, pptx_bytes, session_factory):
         assert report.stored_filename != "weekly.pptx"
 
 
+def test_batch_upload_creates_team_group(client, pptx_bytes, session_factory):
+    response = client.post(
+        "/api/reports/batch",
+        files=[
+            ("files", ("one.pptx", pptx_bytes, PPTX_MIME)),
+            ("files", ("two.pptx", pptx_bytes, PPTX_MIME)),
+        ],
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert len(body["reports"]) == 2
+    assert body["team_summary_url"].startswith("/team-summary/")
+    team_page = client.get(body["team_summary_url"])
+    assert team_page.status_code == 200
+    assert "팀 주간업무 한눈에 보기" in team_page.text
+    with session_factory() as session:
+        reports = ReportRepository(session).list_batch(body["batch_id"])
+        assert len(reports) == 2
+        assert {report.original_filename for report in reports} == {"one.pptx", "two.pptx"}
+
+
+def test_batch_upload_rejects_more_than_ten_files(client, pptx_bytes):
+    response = client.post(
+        "/api/reports/batch",
+        files=[("files", (f"{index}.pptx", pptx_bytes, PPTX_MIME)) for index in range(11)],
+    )
+    assert response.status_code == 400
+
+
 def test_get_missing_report_returns_404(client):
     assert client.get("/api/reports/999999").status_code == 404
 

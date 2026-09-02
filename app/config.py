@@ -17,6 +17,34 @@ def _project_path(value: str) -> Path:
     return path if path.is_absolute() else (Path.cwd() / path).resolve()
 
 
+def _find_soffice() -> str:
+    """Prefer explicit configuration, then PATH, then standard Windows locations."""
+    configured = os.getenv("SOFFICE_PATH")
+    if configured:
+        explicit_path = Path(configured).expanduser()
+        if explicit_path.is_file():
+            return str(explicit_path)
+        configured_on_path = shutil.which(configured)
+        if configured_on_path:
+            return configured_on_path
+        # The distributed .env.example uses "soffice" as a placeholder.  Do not
+        # let that placeholder suppress discovery of an installed Windows copy.
+        if configured.lower() not in {"soffice", "soffice.exe"}:
+            return configured
+    discovered = shutil.which("soffice") or shutil.which("soffice.exe")
+    if discovered:
+        return discovered
+    if os.name == "nt":
+        for candidate in (
+            Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
+            Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
+        ):
+            if candidate.is_file():
+                return str(candidate)
+    # Preserve the executable name so a clear FileNotFound error is reported on other systems.
+    return "soffice"
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_url: str
@@ -44,13 +72,13 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
-    soffice = os.getenv("SOFFICE_PATH") or shutil.which("soffice") or "soffice"
+    soffice = _find_soffice()
     return Settings(
         database_url=os.getenv("DATABASE_URL", "sqlite:///./data/weekly_report.db"),
         upload_dir=_project_path(os.getenv("UPLOAD_DIR", "./data/uploads")),
         temp_dir=_project_path(os.getenv("TEMP_DIR", "./data/temp")),
         ollama_url=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),
-        ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
+        ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:1.7b"),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "900")),
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "30")),
         max_pdf_pages=int(os.getenv("MAX_PDF_PAGES", "100")),

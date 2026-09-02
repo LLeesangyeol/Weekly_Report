@@ -25,6 +25,7 @@ class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     report_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     department: Mapped[str | None] = mapped_column(String(200), nullable=True)
     author: Mapped[str | None] = mapped_column(String(200), nullable=True)
