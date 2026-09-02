@@ -31,6 +31,15 @@ def test_db_record_creation_and_status_change(db, tmp_path):
     assert repository.get(report.id).status == "processing"
 
 
+def test_keyword_search_matches_extracted_korean_text(db, tmp_path):
+    report = create_report(db, tmp_path / "report.pdf")
+    report.extracted_text = "다이텍연구원 방문\n휴가 일정"
+    db.commit()
+    repository = ReportRepository(db)
+    assert [item.id for item in repository.search(keyword="다이텍")] == [report.id]
+    assert [item.id for item in repository.search(keyword="휴가")] == [report.id]
+
+
 class BrokenDocumentService:
     def extract(self, _path):
         raise RuntimeError("synthetic extraction failure")

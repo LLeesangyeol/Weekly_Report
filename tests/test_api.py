@@ -35,6 +35,8 @@ def test_report_list_searches_author_and_home_page(client, pptx_bytes):
     page = client.get("/", params={"keyword": "searchable"})
     assert page.status_code == 200
     assert "검색테스터" in page.text
+    assert client.get("/", params={"report_date": ""}).status_code == 200
+    assert client.get("/api/reports", params={"report_date": ""}).status_code == 200
 
 
 def test_batch_upload_creates_team_group(client, pptx_bytes, session_factory):

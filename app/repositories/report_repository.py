@@ -72,6 +72,8 @@ class ReportRepository:
                 Report.original_filename.ilike(pattern),
                 Report.planned_work.cast(String).ilike(pattern),
                 Report.completed_work.cast(String).ilike(pattern),
+                Report.extracted_text.ilike(pattern),
+                Report.summary.ilike(pattern),
             ))
         if author:
             statement = statement.where(Report.author.ilike(f"%{author}%"))

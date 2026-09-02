@@ -34,6 +34,15 @@ def _clean_optional(value: str | None, field: str, max_length: int = 200) -> str
     return cleaned
 
 
+def _optional_date(value: str | None) -> date | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="기준일은 YYYY-MM-DD 형식이어야 합니다.") from exc
+
+
 @router.post("/reports", response_model=ReportCreated, status_code=status.HTTP_202_ACCEPTED)
 async def upload_report(
     background_tasks: BackgroundTasks,
@@ -143,12 +152,13 @@ def list_reports(
     keyword: str | None = Query(None, max_length=200),
     author: str | None = Query(None, max_length=200),
     department: str | None = Query(None, max_length=200),
-    report_date: date | None = Query(None),
+    report_date: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> list:
+    parsed_date = _optional_date(report_date)
     repository = ReportRepository(db)
-    if any((keyword, author, department, report_date)):
-        return repository.search(keyword=keyword, author=author, department=department, report_date=report_date, limit=limit)
+    if any((keyword, author, department, parsed_date)):
+        return repository.search(keyword=keyword, author=author, department=department, report_date=parsed_date, limit=limit)
     return repository.list(limit=limit, offset=offset)
 
 
