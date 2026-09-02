@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -29,9 +31,17 @@ templates.env.filters["display_item"] = display_item
 
 
 @router.get("/", response_class=HTMLResponse)
-def home(request: Request, db: Session = Depends(get_db)):
-    reports = ReportRepository(db).list(limit=100)
-    return templates.TemplateResponse(request=request, name="index.html", context={"reports": reports})
+def home(
+    request: Request,
+    keyword: str | None = Query(None, max_length=200),
+    author: str | None = Query(None, max_length=200),
+    department: str | None = Query(None, max_length=200),
+    report_date: date | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    repository = ReportRepository(db)
+    reports = repository.search(keyword=keyword, author=author, department=department, report_date=report_date) if any((keyword, author, department, report_date)) else repository.list(limit=100)
+    return templates.TemplateResponse(request=request, name="index.html", context={"reports": reports, "filters": {"keyword": keyword or "", "author": author or "", "department": department or "", "report_date": report_date.isoformat() if report_date else ""}})
 
 
 @router.get("/reports/{report_id}", response_class=HTMLResponse)

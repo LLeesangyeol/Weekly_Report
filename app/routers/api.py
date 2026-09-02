@@ -140,9 +140,16 @@ async def upload_report_batch(
 def list_reports(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    keyword: str | None = Query(None, max_length=200),
+    author: str | None = Query(None, max_length=200),
+    department: str | None = Query(None, max_length=200),
+    report_date: date | None = Query(None),
     db: Session = Depends(get_db),
 ) -> list:
-    return ReportRepository(db).list(limit=limit, offset=offset)
+    repository = ReportRepository(db)
+    if any((keyword, author, department, report_date)):
+        return repository.search(keyword=keyword, author=author, department=department, report_date=report_date, limit=limit)
+    return repository.list(limit=limit, offset=offset)
 
 
 @router.get("/reports/{report_id}", response_model=ReportRead)

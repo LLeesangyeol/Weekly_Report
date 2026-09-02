@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import String, or_, desc, select
 from sqlalchemy.orm import Session
 
 from app.models import Report, ReportStatus
@@ -53,6 +53,33 @@ class ReportRepository:
     def list(self, *, limit: int = 100, offset: int = 0) -> list[Report]:
         statement = select(Report).order_by(desc(Report.created_at)).limit(limit).offset(offset)
         return list(self.session.scalars(statement))
+
+    def search(
+        self,
+        *,
+        keyword: str | None = None,
+        author: str | None = None,
+        department: str | None = None,
+        report_date: date | None = None,
+        limit: int = 100,
+    ) -> list[Report]:
+        statement = select(Report)
+        if keyword:
+            pattern = f"%{keyword}%"
+            statement = statement.where(or_(
+                Report.author.ilike(pattern),
+                Report.department.ilike(pattern),
+                Report.original_filename.ilike(pattern),
+                Report.planned_work.cast(String).ilike(pattern),
+                Report.completed_work.cast(String).ilike(pattern),
+            ))
+        if author:
+            statement = statement.where(Report.author.ilike(f"%{author}%"))
+        if department:
+            statement = statement.where(Report.department.ilike(f"%{department}%"))
+        if report_date:
+            statement = statement.where(Report.report_date == report_date)
+        return list(self.session.scalars(statement.order_by(desc(Report.created_at)).limit(limit)))
 
     def list_batch(self, batch_id: str) -> list[Report]:
         statement = select(Report).where(Report.batch_id == batch_id).order_by(Report.author, Report.id)

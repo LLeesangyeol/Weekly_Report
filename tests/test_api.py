@@ -23,6 +23,20 @@ def test_upload_api_creates_record(client, pptx_bytes, session_factory):
         assert report.stored_filename != "weekly.pptx"
 
 
+def test_report_list_searches_author_and_home_page(client, pptx_bytes):
+    client.post(
+        "/api/reports",
+        files={"file": ("searchable.pptx", pptx_bytes, PPTX_MIME)},
+        data={"author": "검색테스터", "department": "기술부", "report_date": "2026-08-31"},
+    )
+    response = client.get("/api/reports", params={"author": "검색테"})
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    page = client.get("/", params={"keyword": "searchable"})
+    assert page.status_code == 200
+    assert "검색테스터" in page.text
+
+
 def test_batch_upload_creates_team_group(client, pptx_bytes, session_factory):
     response = client.post(
         "/api/reports/batch",
