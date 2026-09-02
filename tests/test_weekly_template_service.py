@@ -41,3 +41,9 @@ def test_parse_template_keeps_unbulleted_work_blocks():
     parsed = parse_weekly_report_template(plain)
     assert parsed.planned_work[0] == "고객사 A 방문\n- 정기점검\n- 로그 및 리포트 정리"
     assert parsed.completed_work[0] == "고객사 B 방문\n- 장애 조치\n- 노션 정리"
+
+
+def test_schedule_keeps_continuation_lines_until_next_weekday():
+    sample = SAMPLE.replace("- 월(31): 사내업무\n- 화(01): 사내업무", "- 월(31): 고객사 A\n고객사 B\n- 화(01): 고객사 C")
+    parsed = parse_weekly_report_template(sample)
+    assert parsed.weekly_schedule == [{"day": "월(31)", "work": "고객사 A\n고객사 B"}, {"day": "화(01)", "work": "고객사 C"}]

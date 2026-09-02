@@ -5,6 +5,14 @@
   <h1>팀 주간업무 한눈에 보기</h1>
   <p class="hint">동일 업로드 묶음의 최대 10명 보고서를 완료 업무와 금주 예정 업무 중심으로 비교합니다.</p>
 </section>
+<section class="panel">
+  <h2>요일별 주요 일정</h2>
+  <div class="schedule-grid">
+  {% for group in grouped_schedule %}
+    <section class="schedule-day"><h3>{{ group["day"] }} <small>{{ group["items"]|length }}명</small></h3><ul>{% for item in group["items"] %}<li><strong>{{ item["author"] }}</strong><br>{{ item["work"] }}</li>{% else %}<li class="empty">일정 없음</li>{% endfor %}</ul></section>
+  {% endfor %}
+  </div>
+</section>
 <section class="team-grid">
 {% for report in reports %}
   <article class="team-card">
@@ -12,7 +20,6 @@
     {% if report.status == 'completed' %}
       <section><h3>지난주 완료 업무</h3><ul>{% for item in report.completed_work %}<li>{{ item|display_item }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
       <section><h3>금주 예정 업무</h3><ul>{% for item in report.planned_work %}<li>{{ item|display_item }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
-      {% if report.issues %}<section class="issue"><h3>문제점 / 지원 필요</h3><ul>{% for item in report.issues %}<li>{{ item|display_item }}</li>{% endfor %}</ul></section>{% endif %}
     {% elif report.status == 'failed' %}<p class="error-text">{{ report.error_message }}</p>
     {% else %}<p class="empty">문서를 처리하고 있습니다. 잠시 후 자동으로 새로고침됩니다.</p>{% endif %}
     <a href="/reports/{{ report.id }}">개별 상세 보기</a>

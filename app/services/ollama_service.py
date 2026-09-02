@@ -108,9 +108,7 @@ report_date, department, author, planned_work, completed_work, weekly_schedule, 
 SUMMARY_HEADINGS = (
     "## 금주 완료 업무",
     "## 진행 중인 업무",
-    "## 문제점 및 지원 필요사항",
-    "## 차주 계획",
-    "## 주요 일정 및 수치",
+    "## 주요 일정",
 )
 
 
@@ -135,9 +133,7 @@ def render_summary(structured: StructuredReport) -> str:
     return "\n\n".join((
         section(SUMMARY_HEADINGS[0], structured.completed_work),
         section(SUMMARY_HEADINGS[1], structured.planned_work),
-        section(SUMMARY_HEADINGS[2], structured.issues),
-        section(SUMMARY_HEADINGS[3], structured.next_week_plan),
-        section(SUMMARY_HEADINGS[4], structured.weekly_schedule),
+        section(SUMMARY_HEADINGS[2], structured.weekly_schedule),
     ))
 
 

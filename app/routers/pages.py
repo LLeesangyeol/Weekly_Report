@@ -66,4 +66,15 @@ def team_summary(batch_id: str, request: Request, db: Session = Depends(get_db))
     reports = ReportRepository(db).list_batch(batch_id)
     if not reports:
         raise HTTPException(status_code=404, detail="업로드 묶음을 찾을 수 없습니다.")
-    return templates.TemplateResponse(request=request, name="team_summary.html", context={"batch_id": batch_id, "reports": reports})
+    weekdays = ("월", "화", "수", "목", "금", "토", "일")
+    weekday_names = {"월": "월요일", "화": "화요일", "수": "수요일", "목": "목요일", "금": "금요일", "토": "토요일", "일": "일요일"}
+    schedules: dict[str, list[dict[str, str]]] = {day: [] for day in weekdays}
+    for report in reports:
+        for item in report.weekly_schedule or []:
+            if not isinstance(item, dict) or not item.get("day") or not item.get("work"):
+                continue
+            key = str(item["day"])[:1]
+            if key in schedules:
+                schedules[key].append({"author": report.author or report.original_filename, "work": str(item["work"]), "date": str(item["day"])})
+    grouped_schedule = [{"day": weekday_names[day], "items": schedules[day]} for day in weekdays]
+    return templates.TemplateResponse(request=request, name="team_summary.html", context={"batch_id": batch_id, "reports": reports, "grouped_schedule": grouped_schedule})

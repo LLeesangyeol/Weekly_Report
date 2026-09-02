@@ -58,6 +58,11 @@ def test_batch_upload_creates_team_group(client, pptx_bytes, session_factory):
         reports = ReportRepository(session).list_batch(body["batch_id"])
         assert len(reports) == 2
         assert {report.original_filename for report in reports} == {"one.pptx", "two.pptx"}
+        reports[0].weekly_schedule = [{"day": "월(31)", "work": "다이텍연구원"}]
+        session.commit()
+    team_page = client.get(body["team_summary_url"])
+    assert "요일별 주요 일정" in team_page.text
+    assert "다이텍연구원" in team_page.text
 
 
 def test_batch_upload_rejects_more_than_ten_files(client, pptx_bytes):

@@ -61,8 +61,12 @@ def parse_weekly_report_template(text: str) -> StructuredReport | None:
     schedule_text = _section(text, "[주간 일정 계획표]", "[금주 업무 실적]")
     completed_text = _section(text, "[금주 업무 실적]")
     schedule = []
-    for day, work in re.findall(r"(?m)^\s*-\s*([^:\n]+):\s*(.+?)\s*$", schedule_text):
-        schedule.append({"day": day.strip(), "work": work.strip()})
+    day_matches = list(re.finditer(r"(?m)^\s*-\s*([월화수목금토일]\s*\(\d+\))\s*:\s*", schedule_text))
+    for index, matched in enumerate(day_matches):
+        end = day_matches[index + 1].start() if index + 1 < len(day_matches) else len(schedule_text)
+        work = "\n".join(line.strip() for line in schedule_text[matched.end():end].splitlines() if line.strip())
+        if work:
+            schedule.append({"day": matched.group(1).replace(" ", ""), "work": work})
 
     return StructuredReport(
         report_date=_first_match(r"(?m)^(\d{4}년\s*\d{1,2}월\s*\d{1,2}일)\s*$", text),

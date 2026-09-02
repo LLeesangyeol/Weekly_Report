@@ -21,8 +21,6 @@
   {{ item_list('예정 업무', report.planned_work) }}
   {{ item_list('완료 업무', report.completed_work) }}
   {{ item_list('주간 일정', report.weekly_schedule) }}
-  {{ item_list('문제점 및 지원 필요사항', report.issues) }}
-  {{ item_list('차주 계획', report.next_week_plan) }}
 </div>
 <section class="panel"><h2>최종 요약</h2><pre class="summary">{{ report.summary or '아직 생성되지 않았습니다.' }}</pre></section>
 {% if report.status in ['uploaded', 'processing'] %}

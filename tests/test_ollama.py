@@ -50,7 +50,8 @@ async def test_ollama_api_mock(settings):
         summary = await service.summarize(structured)
     assert structured.completed_work == ["테스트 완료"]
     assert summary.startswith("## 금주 완료 업무")
-    assert "## 주요 일정 및 수치" in summary
+    assert "## 주요 일정" in summary
+    assert "차주 계획" not in summary
     assert "월(31):" not in summary  # no schedule exists in this fixture
     assert len(calls) == 1
 
