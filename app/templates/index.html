@@ -29,7 +29,7 @@
           <td>{{ report.id }}</td><td>{{ report.report_date or '-' }}</td>
           <td>{{ report.author or '-' }}</td><td>{{ report.department or '-' }}</td>
           <td>{{ report.original_filename }}</td><td><span class="badge {{ report.status }}">{{ report.status }}</span></td>
-          <td>{{ report.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ report.created_at|kst_datetime }}</td>
           <td>{% if report.batch_id %}<a href="/team-summary/{{ report.batch_id }}">묶음 보기</a>{% else %}-{% endif %}</td>
           <td><a href="/reports/{{ report.id }}">상세보기</a></td>
         </tr>

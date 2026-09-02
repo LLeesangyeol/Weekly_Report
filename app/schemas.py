@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+
+
+KST = timezone(timedelta(hours=9), name="Asia/Seoul")
+
+
+def to_kst(value: datetime) -> datetime:
+    utc_value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return utc_value.astimezone(KST)
 
 
 class StructuredReport(BaseModel):
@@ -51,6 +59,10 @@ class ReportRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_serializer("created_at", "updated_at")
+    def serialize_kst_datetime(self, value: datetime) -> str:
+        return to_kst(value).isoformat()
+
 
 class ReportListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -62,6 +74,10 @@ class ReportListItem(BaseModel):
     original_filename: str
     status: str
     created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_kst_datetime(self, value: datetime) -> str:
+        return to_kst(value).isoformat()
 
 
 class ReportStatusRead(BaseModel):

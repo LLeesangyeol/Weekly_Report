@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 from app.repositories.report_repository import ReportRepository
 
@@ -105,3 +106,14 @@ def test_unsafe_download_path_is_blocked(client, session_factory, settings, tmp_
 
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok", "database": "ok"}
+
+
+def test_api_serializes_created_time_as_korea_time():
+    from app.schemas import ReportListItem
+
+    value = ReportListItem.model_validate({
+        "id": 1, "report_date": None, "department": None, "author": None,
+        "original_filename": "sample.pdf", "status": "completed",
+        "created_at": datetime(2026, 9, 2, 0, 0, tzinfo=timezone.utc),
+    }).model_dump(mode="json")
+    assert value["created_at"].startswith("2026-09-02T09:00:00+09:00")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -11,6 +13,7 @@ from app.repositories.report_repository import ReportRepository
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+KST = timezone(timedelta(hours=9), name="Asia/Seoul")
 
 
 def display_item(value) -> str:
@@ -25,7 +28,16 @@ def display_item(value) -> str:
     return str(value)
 
 
+def kst_datetime(value) -> str:
+    if value is None:
+        return "-"
+    # SQLite returns naive datetimes; this app stores those values in UTC.
+    utc_value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return utc_value.astimezone(KST).strftime("%Y-%m-%d %H:%M")
+
+
 templates.env.filters["display_item"] = display_item
+templates.env.filters["kst_datetime"] = kst_datetime
 
 
 def optional_date(value: str | None):
