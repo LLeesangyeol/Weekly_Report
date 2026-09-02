@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}업로드 · 주간업무일지{% endblock %}
+{% block content %}
+<section class="panel upload-panel">
+  <h1>주간업무일지 업로드</h1>
+  <form id="upload-form" enctype="multipart/form-data">
+    <label>파일 <input type="file" name="file" accept=".ppt,.pptx,.pdf" required></label>
+    <div class="grid">
+      <label>작성자 <input type="text" name="author" maxlength="200"></label>
+      <label>부서 <input type="text" name="department" maxlength="200"></label>
+      <label>기준일 <input type="date" name="report_date"></label>
+    </div>
+    <p class="hint">PPT, PPTX, PDF · 기본 최대 30MB</p>
+    <button type="submit">업로드 및 처리</button>
+  </form>
+  <div id="upload-status" class="status" aria-live="polite"></div>
+</section>
+
+<section class="panel">
+  <h2>처리 이력</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>기준일</th><th>작성자</th><th>부서</th><th>파일명</th><th>상태</th><th>생성 시간</th><th></th></tr></thead>
+      <tbody>
+      {% for report in reports %}
+        <tr>
+          <td>{{ report.id }}</td><td>{{ report.report_date or '-' }}</td>
+          <td>{{ report.author or '-' }}</td><td>{{ report.department or '-' }}</td>
+          <td>{{ report.original_filename }}</td><td><span class="badge {{ report.status }}">{{ report.status }}</span></td>
+          <td>{{ report.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td><a href="/reports/{{ report.id }}">상세보기</a></td>
+        </tr>
+      {% else %}<tr><td colspan="8" class="empty">등록된 보고서가 없습니다.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<script>
+const form = document.getElementById('upload-form');
+const statusBox = document.getElementById('upload-status');
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  statusBox.textContent = '업로드 중…';
+  const response = await fetch('/api/reports', {method: 'POST', body: new FormData(form)});
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { statusBox.textContent = body.detail || '업로드에 실패했습니다.'; return; }
+  statusBox.textContent = `보고서 #${body.id} 처리 대기 중…`;
+  poll(body.id);
+});
+async function poll(id) {
+  const response = await fetch(`/api/reports/${id}/status`);
+  const body = await response.json();
+  statusBox.textContent = `보고서 #${id}: ${body.status}`;
+  if (body.status === 'completed' || body.status === 'failed') {
+    window.location.assign(`/reports/${id}`);
+  } else {
+    window.setTimeout(() => poll(id), 1500);
+  }
+}
+</script>
+{% endblock %}

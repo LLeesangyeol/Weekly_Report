@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}보고서 #{{ report.id }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="title-row"><h1>보고서 #{{ report.id }}</h1><span class="badge {{ report.status }}">{{ report.status }}</span></div>
+  <dl class="metadata">
+    <div><dt>기준일</dt><dd>{{ report.report_date or '-' }}</dd></div>
+    <div><dt>부서</dt><dd>{{ report.department or '-' }}</dd></div>
+    <div><dt>작성자</dt><dd>{{ report.author or '-' }}</dd></div>
+    <div><dt>원본</dt><dd>{{ report.original_filename }} ({{ '%.1f'|format(report.file_size / 1024) }} KB)</dd></div>
+    <div><dt>모델</dt><dd>{{ report.model_name }}</dd></div>
+  </dl>
+  <a class="button secondary" href="/api/reports/{{ report.id }}/download">원본 다운로드</a>
+  {% if report.error_message %}<div class="error"><h2>처리 오류</h2><p>{{ report.error_message }}</p></div>{% endif %}
+</section>
+
+{% macro item_list(title, items) %}
+<section class="panel"><h2>{{ title }}</h2><ul>{% for item in items %}<li>{{ item if item is string else item|tojson }}</li>{% else %}<li class="empty">내용 없음</li>{% endfor %}</ul></section>
+{% endmacro %}
+<div class="two-col">
+  {{ item_list('예정 업무', report.planned_work) }}
+  {{ item_list('완료 업무', report.completed_work) }}
+  {{ item_list('주간 일정', report.weekly_schedule) }}
+  {{ item_list('문제점 및 지원 필요사항', report.issues) }}
+  {{ item_list('차주 계획', report.next_week_plan) }}
+</div>
+<section class="panel"><h2>최종 요약</h2><pre class="summary">{{ report.summary or '아직 생성되지 않았습니다.' }}</pre></section>
+{% if report.status in ['uploaded', 'processing'] %}
+<script>
+window.setTimeout(async () => {
+  const response = await fetch('/api/reports/{{ report.id }}/status');
+  const body = await response.json();
+  if (body.status === 'completed' || body.status === 'failed') window.location.reload();
+  else window.location.reload();
+}, 2000);
+</script>
+{% endif %}
+{% endblock %}
