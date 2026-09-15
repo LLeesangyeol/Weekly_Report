@@ -60,6 +60,15 @@ class Settings:
     min_free_disk_gb: float
     soffice_path: str
     conversion_timeout_seconds: int
+    qdrant_url: str | None = None
+    qdrant_path: Path = Path("./data/qdrant")
+    qdrant_collection: str = "tein_document_chunks"
+    embedding_model: str = "bge-m3"
+    embedding_batch_size: int = 8
+    rag_chunk_size: int = 1200
+    rag_chunk_overlap: int = 180
+    rag_top_k: int = 12
+    rag_min_semantic_score: float = 0.56
 
     @property
     def max_upload_bytes(self) -> int:
@@ -68,6 +77,8 @@ class Settings:
     def ensure_directories(self) -> None:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        if not self.qdrant_url:
+            self.qdrant_path.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache
@@ -87,4 +98,13 @@ def get_settings() -> Settings:
         min_free_disk_gb=float(os.getenv("MIN_FREE_DISK_GB", "15")),
         soffice_path=soffice,
         conversion_timeout_seconds=int(os.getenv("CONVERSION_TIMEOUT_SECONDS", "120")),
+        qdrant_url=os.getenv("QDRANT_URL") or None,
+        qdrant_path=_project_path(os.getenv("QDRANT_PATH", "./data/qdrant")),
+        qdrant_collection=os.getenv("QDRANT_COLLECTION", "tein_document_chunks"),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "bge-m3"),
+        embedding_batch_size=int(os.getenv("EMBEDDING_BATCH_SIZE", "8")),
+        rag_chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "1200")),
+        rag_chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "180")),
+        rag_top_k=int(os.getenv("RAG_TOP_K", "12")),
+        rag_min_semantic_score=float(os.getenv("RAG_MIN_SEMANTIC_SCORE", "0.56")),
     )

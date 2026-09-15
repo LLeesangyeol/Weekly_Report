@@ -56,11 +56,16 @@ class ReportRead(BaseModel):
     model_name: str
     status: str
     error_message: str | None
+    index_status: str = "pending"
+    chunk_count: int = 0
+    indexed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
-    @field_serializer("created_at", "updated_at")
-    def serialize_kst_datetime(self, value: datetime) -> str:
+    @field_serializer("created_at", "updated_at", "indexed_at")
+    def serialize_kst_datetime(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
         return to_kst(value).isoformat()
 
 
@@ -72,7 +77,13 @@ class ReportListItem(BaseModel):
     department: str | None
     author: str | None
     original_filename: str
+    file_size: int = 0
+    content_type: str = "application/octet-stream"
+    source_type: str = "file"
     status: str
+    summary: str | None = None
+    index_status: str = "pending"
+    chunk_count: int = 0
     created_at: datetime
 
     @field_serializer("created_at")
@@ -102,3 +113,26 @@ class BatchCreated(BaseModel):
     batch_id: str
     reports: list[BatchReportCreated]
     team_summary_url: str
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+    limit: int = Field(default=8, ge=1, le=20)
+
+
+class KnowledgeSource(BaseModel):
+    id: int
+    filename: str
+    snippet: str
+    score: float
+    report_date: date | None = None
+    author: str | None = None
+    page_number: int | None = None
+    heading: str | None = None
+    heading: str | None = None
+
+
+class KnowledgeSearchResponse(BaseModel):
+    answer: str
+    sources: list[KnowledgeSource]
+    mode: str

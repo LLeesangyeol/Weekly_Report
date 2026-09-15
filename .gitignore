@@ -10,3 +10,8 @@ data/uploads/**
 !data/uploads/.gitkeep
 data/temp/**
 !data/temp/.gitkeep
+data/qdrant/**
+!data/qdrant/.gitkeep
+frontend/node_modules/
+parser/node_modules/
+.test-tmp/

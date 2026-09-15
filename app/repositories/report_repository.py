@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import String, or_, desc, select
+from sqlalchemy import String, delete, or_, desc, select
 from sqlalchemy.orm import Session
 
-from app.models import Report, ReportStatus
+from app.models import DocumentChunk, Report, ReportStatus
 
 
 class ReportRepository:
@@ -27,6 +27,7 @@ class ReportRepository:
         report_date: date | None = None,
         department: str | None = None,
         author: str | None = None,
+        checksum_sha256: str | None = None,
     ) -> Report:
         report = Report(
             original_filename=original_filename,
@@ -40,6 +41,7 @@ class ReportRepository:
             report_date=report_date,
             department=department,
             author=author,
+            checksum_sha256=checksum_sha256,
             status=ReportStatus.UPLOADED.value,
         )
         self.session.add(report)
@@ -49,6 +51,13 @@ class ReportRepository:
 
     def get(self, report_id: int) -> Report | None:
         return self.session.get(Report, report_id)
+
+    def get_by_checksum(self, checksum_sha256: str, original_filename: str | None = None) -> Report | None:
+        statement = select(Report).where(Report.checksum_sha256 == checksum_sha256)
+        if original_filename:
+            statement = statement.where(Report.original_filename == original_filename)
+        statement = statement.order_by(desc(Report.created_at))
+        return self.session.scalar(statement)
 
     def list(self, *, limit: int = 100, offset: int = 0) -> list[Report]:
         statement = select(Report).order_by(desc(Report.created_at)).limit(limit).offset(offset)
@@ -97,4 +106,29 @@ class ReportRepository:
             setattr(report, key, value)
         report.status = ReportStatus.COMPLETED.value
         report.error_message = None
+        self.session.commit()
+
+    def replace_chunks(self, report: Report, chunks: list[dict[str, Any]]) -> list[DocumentChunk]:
+        self.session.execute(delete(DocumentChunk).where(DocumentChunk.report_id == report.id))
+        values = [DocumentChunk(report_id=report.id, **chunk) for chunk in chunks]
+        self.session.add_all(values)
+        self.session.flush()
+        report.chunk_count = len(values)
+        report.index_status = "indexing"
+        self.session.commit()
+        return values
+
+    def list_chunks(self, report_id: int) -> list[DocumentChunk]:
+        statement = select(DocumentChunk).where(DocumentChunk.report_id == report_id).order_by(DocumentChunk.ordinal)
+        return list(self.session.scalars(statement))
+
+    def mark_indexed(self, report: Report) -> None:
+        from app.models import utcnow
+        report.index_status = "indexed"
+        report.indexed_at = utcnow()
+        self.session.commit()
+
+    def mark_index_failed(self, report: Report, error: str) -> None:
+        report.index_status = "failed"
+        report.error_message = error[:2000]
         self.session.commit()

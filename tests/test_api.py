@@ -35,7 +35,8 @@ def test_report_list_searches_author_and_home_page(client, pptx_bytes):
     assert len(response.json()) == 1
     page = client.get("/", params={"keyword": "searchable"})
     assert page.status_code == 200
-    assert "검색테스터" in page.text
+    assert "TEIN Knowledge" in page.text
+    assert "src=\"/tein-logo.png\"" not in page.text  # asset is loaded by the React bundle
     assert client.get("/", params={"report_date": ""}).status_code == 200
     assert client.get("/api/reports", params={"report_date": ""}).status_code == 200
 
@@ -106,6 +107,12 @@ def test_unsafe_download_path_is_blocked(client, session_factory, settings, tmp_
 
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok", "database": "ok"}
+
+
+def test_ai_search_empty_result_is_valid_response(client):
+    response = client.post("/api/ai/search", json={"query": "존재하지않는질문"})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "no_results"
 
 
 def test_api_serializes_created_time_as_korea_time():

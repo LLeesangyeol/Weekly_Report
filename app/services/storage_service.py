@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import uuid
 import zipfile
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,12 +13,17 @@ from fastapi import UploadFile
 from app.config import Settings
 
 
-ALLOWED_EXTENSIONS = {".ppt", ".pptx", ".pdf"}
+ALLOWED_EXTENSIONS = {".ppt", ".pptx", ".pdf", ".hwp", ".hwpx", ".docx", ".xls", ".xlsx"}
 GENERIC_MIME_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 EXPECTED_MIME_TYPES = {
     ".ppt": {"application/vnd.ms-powerpoint"},
     ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/zip"},
     ".pdf": {"application/pdf"},
+    ".hwp": {"application/x-hwp", "application/haansofthwp", "application/vnd.hancom.hwp"},
+    ".hwpx": {"application/haansofthwpx", "application/vnd.hancom.hwpx", "application/zip"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"},
+    ".xls": {"application/vnd.ms-excel"},
+    ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip"},
 }
 
 
@@ -37,12 +43,13 @@ class StoredUpload:
     size: int
     content_type: str
     source_type: str
+    checksum_sha256: str
 
 
 def validate_extension(filename: str) -> str:
     extension = Path(filename).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
-        raise UploadValidationError("지원하지 않는 파일 형식입니다. PPT, PPTX, PDF만 업로드할 수 있습니다.")
+        raise UploadValidationError("지원하지 않는 파일 형식입니다. PDF, PPT, 한글, Word, Excel을 업로드할 수 있습니다.")
     return extension
 
 
@@ -51,18 +58,21 @@ def _validate_signature(path: Path, extension: str) -> None:
         header = stream.read(8)
     if extension == ".pdf" and not header.startswith(b"%PDF-"):
         raise UploadValidationError("PDF 파일 시그니처가 올바르지 않습니다.")
-    if extension == ".ppt" and header != bytes.fromhex("D0CF11E0A1B11AE1"):
-        raise UploadValidationError("PPT 파일 시그니처가 올바르지 않습니다.")
-    if extension == ".pptx":
+    if extension in {".ppt", ".hwp", ".xls"} and header != bytes.fromhex("D0CF11E0A1B11AE1"):
+        raise UploadValidationError(f"{extension[1:].upper()} 파일 시그니처가 올바르지 않습니다.")
+    if extension in {".pptx", ".hwpx", ".docx", ".xlsx"}:
         if not header.startswith(b"PK"):
-            raise UploadValidationError("PPTX 파일 시그니처가 올바르지 않습니다.")
+            raise UploadValidationError(f"{extension[1:].upper()} 파일 시그니처가 올바르지 않습니다.")
         try:
             with zipfile.ZipFile(path) as archive:
                 names = set(archive.namelist())
-                if "[Content_Types].xml" not in names or "ppt/presentation.xml" not in names:
-                    raise UploadValidationError("유효한 PPTX 패키지가 아닙니다.")
+                required = {".pptx": "ppt/presentation.xml", ".docx": "word/document.xml", ".xlsx": "xl/workbook.xml"}.get(extension)
+                if required and ("[Content_Types].xml" not in names or required not in names):
+                    raise UploadValidationError(f"유효한 {extension[1:].upper()} 패키지가 아닙니다.")
+                if extension == ".hwpx" and not any(name.startswith("Contents/") for name in names):
+                    raise UploadValidationError("유효한 HWPX 패키지가 아닙니다.")
         except zipfile.BadZipFile as exc:
-            raise UploadValidationError("손상된 PPTX 파일입니다.") from exc
+            raise UploadValidationError(f"손상된 {extension[1:].upper()} 파일입니다.") from exc
 
 
 class StorageService:
@@ -94,6 +104,7 @@ class StorageService:
         destination = destination_dir / stored_filename
         partial = destination.with_suffix(destination.suffix + ".part")
         size = 0
+        digest = hashlib.sha256()
         try:
             with partial.open("xb") as stream:
                 while chunk := await upload.read(1024 * 1024):
@@ -103,6 +114,7 @@ class StorageService:
                             f"파일 크기는 {self.settings.max_upload_mb}MB를 초과할 수 없습니다."
                         )
                     stream.write(chunk)
+                    digest.update(chunk)
             if size == 0:
                 raise UploadValidationError("빈 파일은 업로드할 수 없습니다.")
             _validate_signature(partial, extension)
@@ -120,6 +132,7 @@ class StorageService:
             size=size,
             content_type=content_type or "application/octet-stream",
             source_type=extension.lstrip("."),
+            checksum_sha256=digest.hexdigest(),
         )
 
     def safe_download_path(self, registered_path: str) -> Path:

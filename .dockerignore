@@ -1,0 +1,9 @@
+.git
+.venv
+.test-tmp
+data
+frontend/node_modules
+frontend/dist
+parser/node_modules
+__pycache__
+*.pyc

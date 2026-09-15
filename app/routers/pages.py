@@ -50,7 +50,7 @@ def optional_date(value: str | None):
         raise HTTPException(status_code=422, detail="기준일은 YYYY-MM-DD 형식이어야 합니다.") from exc
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/legacy", response_class=HTMLResponse)
 def home(
     request: Request,
     keyword: str | None = Query(None, max_length=200),
@@ -65,7 +65,7 @@ def home(
     return templates.TemplateResponse(request=request, name="index.html", context={"reports": reports, "filters": {"keyword": keyword or "", "author": author or "", "department": department or "", "report_date": parsed_date.isoformat() if parsed_date else ""}})
 
 
-@router.get("/reports/{report_id}", response_class=HTMLResponse)
+@router.get("/legacy/reports/{report_id}", response_class=HTMLResponse)
 def report_detail(report_id: int, request: Request, db: Session = Depends(get_db)):
     report = ReportRepository(db).get(report_id)
     if report is None:

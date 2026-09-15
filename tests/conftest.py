@@ -31,6 +31,7 @@ def settings(tmp_path: Path) -> Settings:
         min_free_disk_gb=0,
         soffice_path="soffice",
         conversion_timeout_seconds=2,
+        qdrant_path=tmp_path / "qdrant",
     )
     value.ensure_directories()
     return value

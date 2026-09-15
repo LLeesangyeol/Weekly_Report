@@ -1,6 +1,17 @@
-# 주간업무일지 LLM 요약 시스템
+# TEIN 사내 지식 문서함
 
-PPT/PPTX/PDF 주간업무일지를 업로드하면 텍스트 추출, Ollama 구조화, 요약, 이력 조회와 원본 다운로드를 제공하는 사내용 FastAPI MVP입니다.
+React + Vite 문서함에서 PDF, PPT/PPTX, HWP/HWPX, DOCX, XLS/XLSX 문서를 보관하고, 저장된 원문을 근거로 Ollama가 통합 검색·요약하는 사내용 서비스입니다. 기존 주간업무일지 기능과 데이터도 별도 탭에서 유지합니다.
+
+## 구성
+
+- React + Vite: 문서함, AI 통합검색, 업무일지, 시스템 관리 화면
+- FastAPI + SQLAlchemy: 업로드, 검색, 다운로드, 처리·재색인 API
+- PostgreSQL(운영) / SQLite(로컬): 문서 메타데이터와 원문 청크
+- Qdrant 서버(운영) / Embedded Qdrant(로컬): 의미 기반 벡터 검색
+- Ollama `qwen3:1.7b`: 검색된 근거를 바탕으로 답변과 요약 생성
+- Ollama `bge-m3`: 한국어·영문 문서와 질문의 임베딩 생성
+- Kordoc: HWP/HWPX, DOCX, XLS/XLSX 파싱
+- VM 영구 볼륨: 원본 파일 저장
 
 ## 주요 동작
 
@@ -15,7 +26,7 @@ PPT/PPTX/PDF 주간업무일지를 업로드하면 텍스트 추출, Ollama 구�
 
 ## 준비
 
-Python 3.11 이상, Ollama, 구형 `.ppt` 처리를 위한 LibreOffice가 필요합니다.
+Python 3.11 이상, Node.js 20 이상, Ollama, 구형 `.ppt` 처리를 위한 LibreOffice가 필요합니다. Kordoc가 한글·Word·Excel 문서를 파싱합니다.
 
 ```powershell
 py -3 -m venv .venv
@@ -23,17 +34,43 @@ py -3 -m venv .venv
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ollama pull qwen3:1.7b
+cd frontend
+pnpm install
+pnpm build
+cd ..\parser
+pnpm install
+cd ..
 ```
 
 LibreOffice가 PATH에 없다면 `.env`의 `SOFFICE_PATH`에 `soffice.exe` 절대 경로를 지정합니다. 기본 디스크 정책은 사용률 80% 미만이면서 여유 공간 15GB 이상일 때만 업로드를 허용합니다. 개발 PC 여건에 맞게 `.env`에서 조정할 수 있습니다.
 
 ## 실행
 
-프로젝트 루트에서 다음을 실행하고 `http://127.0.0.1:8000`을 엽니다.
+프론트 빌드 후 프로젝트 루트에서 다음을 실행하고 `http://127.0.0.1:8000`을 엽니다. React 화면과 API가 한 포트에서 실행됩니다.
 
 ```powershell
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+Windows CMD에서는 프로젝트 폴더에서 아래 한 줄로 Ollama 확인과 서버 실행을 함께 할 수 있습니다.
+
+```cmd
+start-local.cmd
+```
+
+처음 구축한 기존 문서를 벡터 DB에 넣으려면 관리 탭의 `전체 문서 재색인`을 누릅니다.
+
+## Ubuntu VM 운영
+
+Docker와 Ollama를 설치하고 `.env`에 `POSTGRES_PASSWORD`를 설정한 다음 실행합니다.
+
+```bash
+ollama pull qwen3:1.7b
+ollama pull bge-m3
+docker compose up -d --build
+```
+
+PostgreSQL, Qdrant와 업로드 원본은 각각 Docker 영구 볼륨에 보존됩니다. Ollama가 호스트에서 컨테이너 요청을 받도록 `OLLAMA_HOST=0.0.0.0:11434`로 실행해야 합니다.
 
 상태 확인:
 
@@ -51,7 +88,9 @@ pytest -q
 
 ## API
 
-- `GET /` 업로드 및 처리 이력 화면
+- `GET /` React 문서함 및 AI 통합검색 화면
+- `GET /legacy` 이전 HTML 업무일지 화면
+- `POST /api/ai/search` 저장된 문서를 근거로 통합 검색·답변
 - `POST /api/reports` 업로드(비동기 처리 등록)
 - `POST /api/reports/batch` 최대 10개 팀 일지 업로드(비동기 처리 등록)
 - `GET /api/reports` 목록

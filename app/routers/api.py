@@ -7,13 +7,21 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import SessionLocal, get_db
+from app.models import DocumentChunk, Report
 from app.repositories.report_repository import ReportRepository
-from app.schemas import BatchCreated, BatchReportCreated, ReportCreated, ReportListItem, ReportRead, ReportStatusRead
+from app.schemas import (
+    BatchCreated, BatchReportCreated, KnowledgeSearchRequest, KnowledgeSearchResponse,
+    KnowledgeSource, ReportCreated, ReportListItem, ReportRead, ReportStatusRead,
+)
+from app.services.knowledge_search_service import KnowledgeSearchService
+from app.services.ollama_service import OllamaService
+from app.services.vector_store_service import get_vector_store
+import httpx
 from app.services.report_service import ReportProcessor
 from app.services.storage_service import InsufficientStorageError, StorageService, UploadValidationError
 
@@ -23,6 +31,132 @@ router = APIRouter(prefix="/api")
 
 def get_report_processor(settings: Settings = Depends(get_settings)) -> ReportProcessor:
     return ReportProcessor(settings, session_factory=SessionLocal)
+
+
+@router.delete("/reports")
+def delete_all_reports(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, int]:
+    """Remove every uploaded document and its search data; app source is never in scope."""
+    reports = list(db.scalars(select(Report)))
+    report_count = len(reports)
+    chunk_count = db.scalar(select(func.count()).select_from(DocumentChunk)) or 0
+
+    vector_store = get_vector_store(settings)
+    if vector_store.client.collection_exists(vector_store.collection):
+        vector_store.client.delete_collection(vector_store.collection)
+
+    upload_root = settings.upload_dir.resolve()
+    deleted_files = 0
+    for report in reports:
+        try:
+            file_path = Path(report.file_path).resolve()
+            if file_path.is_relative_to(upload_root) and file_path.is_file():
+                file_path.unlink()
+                deleted_files += 1
+        except OSError:
+            # The database deletion still proceeds: missing or locked old originals must not retain search data.
+            continue
+
+    db.execute(delete(DocumentChunk))
+    db.execute(delete(Report))
+    db.commit()
+    return {"reports_deleted": report_count, "chunks_deleted": chunk_count, "original_files_deleted": deleted_files}
+
+
+@router.post("/ai/search", response_model=KnowledgeSearchResponse)
+async def search_knowledge(
+    request: KnowledgeSearchRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> KnowledgeSearchResponse:
+    answer, hits, mode = await KnowledgeSearchService(
+        db,
+        OllamaService(settings),
+        get_vector_store(settings),
+        min_semantic_score=settings.rag_min_semantic_score,
+    ).answer(
+        request.query, request.limit
+    )
+    return KnowledgeSearchResponse(
+        answer=answer,
+        mode=mode,
+        sources=[
+            KnowledgeSource(
+                id=hit.report.id,
+                filename=hit.report.original_filename,
+                snippet=hit.snippet,
+                score=hit.score,
+                report_date=hit.report.report_date,
+                author=hit.report.author,
+                page_number=hit.page_number,
+                heading=hit.heading,
+            )
+            for hit in hits
+        ],
+    )
+
+
+@router.post("/reports/{report_id}/reindex", status_code=status.HTTP_202_ACCEPTED)
+def reindex_report(
+    report_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    processor: ReportProcessor = Depends(get_report_processor),
+) -> dict[str, object]:
+    report = ReportRepository(db).get(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    if not report.extracted_text:
+        raise HTTPException(status_code=409, detail="추출된 원문이 없어 재색인할 수 없습니다.")
+    report.index_status = "queued"
+    db.commit()
+    background_tasks.add_task(processor.reindex, report_id)
+    return {"id": report_id, "index_status": "queued"}
+
+
+@router.post("/index/rebuild", status_code=status.HTTP_202_ACCEPTED)
+def rebuild_index(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    processor: ReportProcessor = Depends(get_report_processor),
+) -> dict[str, object]:
+    reports = [item for item in ReportRepository(db).list(limit=500) if item.extracted_text]
+    for report in reports:
+        report.index_status = "queued"
+        background_tasks.add_task(processor.reindex, report.id)
+    db.commit()
+    return {"queued": len(reports)}
+
+
+@router.get("/system/status")
+async def system_status(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    counts = {"documents": 0, "indexed": 0, "failed": 0, "chunks": 0}
+    reports = ReportRepository(db).list(limit=500)
+    counts["documents"] = len(reports)
+    counts["indexed"] = sum(item.index_status == "indexed" for item in reports)
+    counts["failed"] = sum(item.status == "failed" or item.index_status == "failed" for item in reports)
+    counts["chunks"] = sum(item.chunk_count or 0 for item in reports)
+    try:
+        vector = get_vector_store(settings).status()
+    except Exception as exc:
+        vector = {"status": "error", "detail": str(exc)[:200]}
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.get(f"{settings.ollama_url}/api/tags")
+            response.raise_for_status()
+            models = [item.get("name") for item in response.json().get("models", [])]
+        available = {name.split(":", 1)[0] for name in models if name}
+        ollama = {"status": "ok", "chat_model": settings.ollama_model,
+                  "embedding_model": settings.embedding_model,
+                  "models_ready": settings.ollama_model in models and settings.embedding_model.split(":", 1)[0] in available}
+    except Exception as exc:
+        ollama = {"status": "error", "detail": str(exc)[:200]}
+    return {"database": {"status": "ok", "driver": db.bind.dialect.name}, "vector": vector, "ollama": ollama, "counts": counts}
 
 
 def _clean_optional(value: str | None, field: str, max_length: int = 200) -> str | None:
@@ -69,6 +203,10 @@ async def upload_report(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except InsufficientStorageError as exc:
         raise HTTPException(status_code=507, detail=str(exc)) from exc
+    existing = ReportRepository(db).get_by_checksum(stored.checksum_sha256, stored.original_filename)
+    if existing is not None:
+        stored.path.unlink(missing_ok=True)
+        return ReportCreated(id=existing.id, status=existing.status, status_url=f"/api/reports/{existing.id}/status")
     try:
         report = ReportRepository(db).create(
             original_filename=stored.original_filename,
@@ -81,6 +219,7 @@ async def upload_report(
             report_date=parsed_date,
             department=clean_department,
             author=clean_author,
+            checksum_sha256=stored.checksum_sha256,
         )
     except Exception:
         stored.path.unlink(missing_ok=True)
@@ -118,6 +257,12 @@ async def upload_report_batch(
         for upload in files:
             stored = await storage.save(upload)
             saved_paths.append(stored.path)
+            existing = ReportRepository(db).get_by_checksum(stored.checksum_sha256, stored.original_filename)
+            if existing is not None:
+                stored.path.unlink(missing_ok=True)
+                saved_paths.remove(stored.path)
+                created.append(existing)
+                continue
             report = ReportRepository(db).create(
                 original_filename=stored.original_filename,
                 stored_filename=stored.stored_filename,
@@ -130,6 +275,7 @@ async def upload_report_batch(
                 report_date=parsed_date,
                 department=clean_department,
                 author=clean_author,
+                checksum_sha256=stored.checksum_sha256,
             )
             created.append(report)
             background_tasks.add_task(processor.process, report.id)

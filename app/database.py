@@ -37,10 +37,20 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if engine.url.drivername.startswith("sqlite"):
         columns = {column["name"] for column in inspect(engine).get_columns("reports")}
-        if "batch_id" not in columns:
-            with engine.begin() as connection:
-                connection.execute(text("ALTER TABLE reports ADD COLUMN batch_id VARCHAR(36)"))
-                connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_batch_id ON reports (batch_id)"))
+        migrations = {
+            "batch_id": "ALTER TABLE reports ADD COLUMN batch_id VARCHAR(36)",
+            "checksum_sha256": "ALTER TABLE reports ADD COLUMN checksum_sha256 VARCHAR(64)",
+            "index_status": "ALTER TABLE reports ADD COLUMN index_status VARCHAR(20) NOT NULL DEFAULT 'pending'",
+            "chunk_count": "ALTER TABLE reports ADD COLUMN chunk_count INTEGER NOT NULL DEFAULT 0",
+            "indexed_at": "ALTER TABLE reports ADD COLUMN indexed_at DATETIME",
+        }
+        with engine.begin() as connection:
+            for column, statement in migrations.items():
+                if column not in columns:
+                    connection.execute(text(statement))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_batch_id ON reports (batch_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_checksum_sha256 ON reports (checksum_sha256)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_index_status ON reports (index_status)"))
 
 
 def get_db() -> Generator[Session, None, None]:
