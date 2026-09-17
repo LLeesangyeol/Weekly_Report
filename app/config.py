@@ -92,7 +92,7 @@ def get_settings() -> Settings:
         ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:1.7b"),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "900")),
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "30")),
-        max_pdf_pages=int(os.getenv("MAX_PDF_PAGES", "100")),
+        max_pdf_pages=int(os.getenv("MAX_PDF_PAGES", "1000")),
         text_chunk_size=int(os.getenv("TEXT_CHUNK_SIZE", "5000")),
         disk_usage_limit_percent=float(os.getenv("DISK_USAGE_LIMIT_PERCENT", "80")),
         min_free_disk_gb=float(os.getenv("MIN_FREE_DISK_GB", "15")),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
@@ -59,10 +59,12 @@ class ReportRead(BaseModel):
     index_status: str = "pending"
     chunk_count: int = 0
     indexed_at: datetime | None = None
+    deleted_at: datetime | None = None
+    preview_path: str | None = None
     created_at: datetime
     updated_at: datetime
 
-    @field_serializer("created_at", "updated_at", "indexed_at")
+    @field_serializer("created_at", "updated_at", "indexed_at", "deleted_at")
     def serialize_kst_datetime(self, value: datetime | None) -> str | None:
         if value is None:
             return None
@@ -84,6 +86,7 @@ class ReportListItem(BaseModel):
     summary: str | None = None
     index_status: str = "pending"
     chunk_count: int = 0
+    deleted_at: datetime | None = None
     created_at: datetime
 
     @field_serializer("created_at")
@@ -118,6 +121,16 @@ class BatchCreated(BaseModel):
 class KnowledgeSearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=500)
     limit: int = Field(default=8, ge=1, le=20)
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class GeneralChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=8)
 
 
 class KnowledgeSource(BaseModel):

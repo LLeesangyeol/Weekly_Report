@@ -338,3 +338,32 @@ async def test_summary_query_only_returns_items_matching_the_requested_keyword(d
     assert [hit.report.author for hit in hits] == ["다이텍"]
     assert "다이텍연구원 방화벽 정기점검" in answer
     assert "경북대학교병원" not in answer
+
+
+@pytest.mark.asyncio
+async def test_vulnerability_findings_query_excludes_weekly_tasks_that_only_mention_vulnerabilities(db, settings):
+    repository = ReportRepository(db)
+    finding = repository.create(
+        original_filename="취약점 분석 결과보고서.hwp", stored_filename="finding.hwp",
+        file_path=str(settings.upload_dir / "finding.hwp"), file_size=10,
+        content_type="application/x-hwp", source_type="hwp", model_name="test-model",
+        report_date=date(2026, 8, 31),
+    )
+    finding.status = ReportStatus.COMPLETED.value
+    finding.extracted_text = "점검 내용 U-01 root 원격 접속 점검 결과 취약 조치 내용 root 로그인을 제한"
+    finding.summary = "## 점검 개요\n- 확인된 점검 항목: 1건\n## 주요 조치 사항\n- U-01 root 원격 접속: root 로그인을 제한"
+    weekly = repository.create(
+        original_filename="주간업무일지.pptx", stored_filename="weekly-security.pptx",
+        file_path=str(settings.upload_dir / "weekly-security.pptx"), file_size=10,
+        content_type="application/pptx", source_type="pptx", model_name="test-model",
+    )
+    weekly.status = ReportStatus.COMPLETED.value
+    weekly.extracted_text = "취약점 관련 NAC 패치 작업을 진행했다"
+    db.commit()
+
+    answer, hits, mode = await KnowledgeSearchService(db, FakeOllama()).answer("지금까지 발견된 취약점을 날짜별로 정리해줘", 10)
+
+    assert mode == "vulnerability_summary"
+    assert [hit.report.id for hit in hits] == [finding.id]
+    assert "root 로그인을 제한" in answer
+    assert "NAC 패치" not in answer

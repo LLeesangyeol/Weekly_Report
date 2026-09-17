@@ -43,6 +43,8 @@ def init_db() -> None:
             "index_status": "ALTER TABLE reports ADD COLUMN index_status VARCHAR(20) NOT NULL DEFAULT 'pending'",
             "chunk_count": "ALTER TABLE reports ADD COLUMN chunk_count INTEGER NOT NULL DEFAULT 0",
             "indexed_at": "ALTER TABLE reports ADD COLUMN indexed_at DATETIME",
+            "deleted_at": "ALTER TABLE reports ADD COLUMN deleted_at DATETIME",
+            "preview_path": "ALTER TABLE reports ADD COLUMN preview_path VARCHAR(1000)",
         }
         with engine.begin() as connection:
             for column, statement in migrations.items():
@@ -51,6 +53,7 @@ def init_db() -> None:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_batch_id ON reports (batch_id)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_checksum_sha256 ON reports (checksum_sha256)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_index_status ON reports (index_status)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_reports_deleted_at ON reports (deleted_at)"))
 
 
 def get_db() -> Generator[Session, None, None]:

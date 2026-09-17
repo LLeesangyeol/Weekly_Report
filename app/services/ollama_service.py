@@ -285,6 +285,24 @@ class OllamaService:
             {"role": "user", "content": f"질문: {question}\n\n검색된 문서:\n{context}"},
         ])
 
+    async def general_chat(self, message: str, history: list[dict[str, str]] | None = None) -> str:
+        messages: list[dict[str, str]] = [{
+            "role": "system",
+            "content": (
+                "당신은 TEIN System의 친절한 한국어 AI 어시스턴트다. "
+                "일상 대화, 업무 아이디어, 글쓰기, 기술 개념 설명을 자연스럽고 간결하게 돕는다. "
+                "이 모드에서는 사내 문서를 검색하거나 문서에 근거했다고 주장하지 마라. "
+                "불확실한 사실은 단정하지 말고, 사용자가 원하는 답을 바로 제시하라."
+            ),
+        }]
+        for turn in (history or [])[-8:]:
+            role = turn.get("role")
+            content = turn.get("content", "").strip()
+            if role in {"user", "assistant"} and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": message})
+        return await self._chat(messages)
+
     async def summarize_document(self, text: str) -> str:
         chunks = split_text(text, self.settings.text_chunk_size)
         source = "\n\n".join(chunks[:4])

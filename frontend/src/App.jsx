@@ -3,14 +3,16 @@ import {
   Archive, Bot, CalendarDays, Check, ChevronRight, Clock3,
   Download, File, FileArchive, FileChartColumn, FileSpreadsheet, FileText,
   Folder, FolderOpen, HardDrive, LayoutDashboard, ListFilter, LoaderCircle,
-  Menu, MessageSquareText, MoreHorizontal, Plus, Search, Send, Settings,
-  ShieldCheck, Sparkles, Upload, Users, X,
+  MessageSquareText, MoreHorizontal, Plus, Search, Send, Settings,
+  ShieldCheck, Sparkles, Trash2, RotateCcw, Upload, Users, X,
 } from 'lucide-react'
 
 const navItems = [
   { id: 'library', label: '문서함', icon: FolderOpen },
   { id: 'ai', label: 'AI 통합검색', icon: Sparkles },
+  { id: 'vulnerabilities', label: '취약점 문서함', icon: ShieldCheck },
   { id: 'reports', label: '업무일지', icon: CalendarDays },
+  { id: 'trash', label: '휴지통', icon: Trash2 },
   { id: 'admin', label: '관리', icon: Settings },
 ]
 
@@ -46,6 +48,10 @@ function extensionOf(item) {
   return item.source_type || item.original_filename?.split('.').pop()?.toLowerCase() || 'file'
 }
 
+function isVulnerabilityDocument(item) {
+  return /취약점/i.test(item.original_filename || '')
+}
+
 function FileGlyph({ item, size = 'normal' }) {
   const meta = fileMeta[extensionOf(item)] || { label: 'FILE', icon: File, color: 'slate' }
   const Icon = meta.icon
@@ -64,26 +70,28 @@ function EmptyState({ query }) {
   return <div className="empty-state"><FileArchive size={34} /><h3>문서를 찾지 못했습니다</h3><p>{query ? `'${query}'와 일치하는 문서가 없습니다.` : '새 문서를 업로드해 지식 문서함을 채워보세요.'}</p></div>
 }
 
-function Library({ reports, loading, query, setQuery, onSearch, onUpload, onOpen }) {
+function Library({ reports, loading, query, setQuery, onSearch, onUpload, onOpen, onTrash, vulnerabilityOnly = false }) {
   const [type, setType] = useState('all')
-  const filtered = type === 'all' ? reports : reports.filter((r) => extensionOf(r) === type)
-  const completed = reports.filter((r) => r.status === 'completed').length
-  const indexed = reports.filter((r) => r.status === 'completed' && r.index_status === 'indexed').length
+  const [menuId, setMenuId] = useState(null)
+  const scopedReports = vulnerabilityOnly ? reports.filter(isVulnerabilityDocument) : reports
+  const filtered = type === 'all' ? scopedReports : scopedReports.filter((r) => extensionOf(r) === type)
+  const completed = scopedReports.filter((r) => r.status === 'completed').length
+  const indexed = scopedReports.filter((r) => r.status === 'completed' && r.index_status === 'indexed').length
   return <main className="page">
     <div className="page-heading">
-      <div><p className="eyebrow">DOCUMENT LIBRARY</p><h1>사내 문서함</h1><p>흩어진 문서를 한곳에 모으고, 필요한 정보를 빠르게 찾아보세요.</p></div>
-      <button className="primary" onClick={onUpload}><Upload size={18} />문서 업로드</button>
+      <div><p className="eyebrow">{vulnerabilityOnly ? 'VULNERABILITY ARCHIVE' : 'DOCUMENT LIBRARY'}</p><h1>{vulnerabilityOnly ? '취약점 문서함' : '사내 문서함'}</h1><p>{vulnerabilityOnly ? '취약점 점검, 조치 결과, 보안 가이드를 모아 AI 검색에 활용합니다.' : '흩어진 문서를 한곳에 모으고, 필요한 정보를 빠르게 찾아보세요.'}</p></div>
+      <button className="primary" onClick={onUpload}><Upload size={18} />{vulnerabilityOnly ? '취약점 문서 업로드' : '문서 업로드'}</button>
     </div>
 
     <section className="metrics">
-      <div className="metric"><span className="metric-icon navy"><Folder size={21} /></span><div><p>전체 문서</p><strong>{reports.length}</strong><small>개의 문서</small></div></div>
+      <div className="metric"><span className="metric-icon navy"><Folder size={21} /></span><div><p>{vulnerabilityOnly ? '취약점 문서' : '전체 문서'}</p><strong>{scopedReports.length}</strong><small>개의 문서</small></div></div>
       <div className="metric"><span className="metric-icon cyan"><Check size={21} /></span><div><p>문서 분석 완료</p><strong>{completed}</strong><small>개의 문서</small></div></div>
-      <div className="metric"><span className="metric-icon violet"><Bot size={21} /></span><div><p>AI 검색 인덱싱</p><strong>{reports.length ? Math.round(indexed / reports.length * 100) : 0}%</strong><small>{indexed}개 검색 준비 완료</small></div></div>
+      <div className="metric"><span className="metric-icon violet"><Bot size={21} /></span><div><p>AI 검색 인덱싱</p><strong>{scopedReports.length ? Math.round(indexed / scopedReports.length * 100) : 0}%</strong><small>{indexed}개 검색 준비 완료</small></div></div>
     </section>
 
     <section className="content-card">
       <div className="toolbar">
-        <form className="search-box" onSubmit={onSearch}><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="파일명, 내용, 작성자 검색" /><kbd>Enter</kbd></form>
+        <form className="search-box" onSubmit={onSearch}><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={vulnerabilityOnly ? '취약점 항목, 조치 내용, 파일명 검색' : '파일명, 내용, 작성자 검색'} /><kbd>Enter</kbd></form>
         <select value={type} onChange={(e) => setType(e.target.value)} aria-label="파일 형식"><option value="all">전체 형식</option><option value="pdf">PDF</option><option value="pptx">PPT</option><option value="xlsx">Excel</option><option value="hwp">한글</option></select>
         <button className="icon-button" title="필터"><ListFilter size={19} /></button>
       </div>
@@ -92,10 +100,10 @@ function Library({ reports, loading, query, setQuery, onSearch, onUpload, onOpen
           <thead><tr><th>문서명</th><th>분류</th><th>작성자 / 부서</th><th>기준일</th><th>크기</th><th>상태</th><th></th></tr></thead>
           <tbody>{filtered.map((item) => <tr key={item.id} onClick={() => onOpen(item.id)}>
             <td><div className="document-name"><FileGlyph item={item} /><div><strong>{item.original_filename}</strong><span>업로드 {formatDate(item.created_at)}</span></div></div></td>
-            <td><span className="category-pill">{item.source_type === 'pptx' || item.source_type === 'ppt' ? '업무일지' : '일반 문서'}</span></td>
+            <td><span className={`category-pill ${isVulnerabilityDocument(item) ? 'vulnerability' : item.source_type === 'pptx' || item.source_type === 'ppt' ? 'weekly' : 'general'}`}>{isVulnerabilityDocument(item) ? '보안 취약점' : item.source_type === 'pptx' || item.source_type === 'ppt' ? '업무일지' : '일반 문서'}</span></td>
             <td><div className="person"><strong>{item.author || '미지정'}</strong><span>{item.department || '부서 미지정'}</span></div></td>
             <td>{item.report_date || '-'}</td><td>{formatBytes(item.file_size)}</td><td><div className="status-stack"><Status value={item.status} />{item.status === 'completed' && item.index_status !== 'indexed' && <span className="index-wait">검색 {item.index_status === 'failed' ? '실패' : '준비 중'}</span>}</div></td>
-            <td><button className="row-action" onClick={(e) => e.stopPropagation()}><MoreHorizontal size={18} /></button></td>
+            <td className="row-menu-cell"><button className="row-action" aria-label={`${item.original_filename} 메뉴`} onClick={(e) => { e.stopPropagation(); setMenuId(menuId === item.id ? null : item.id) }}><MoreHorizontal size={18} /></button>{menuId === item.id && <div className="row-menu"><button onClick={(e) => { e.stopPropagation(); setMenuId(null); onTrash(item.id) }}><Trash2 size={15} />휴지통으로 이동</button></div>}</td>
           </tr>)}</tbody>
         </table>
         {!loading && filtered.length === 0 && <EmptyState query={query} />}
@@ -110,7 +118,7 @@ function InlineAnswerText({ text }) {
   return <>{text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => part.startsWith('**') && part.endsWith('**') ? <strong key={index}>{part.slice(2, -2)}</strong> : part)}</>
 }
 
-function AnswerContent({ content }) {
+function AnswerContent({ content, label = '검색 결과' }) {
   const blocks = []
   let list = []
   const flushList = () => { if (list.length) { blocks.push({ type: 'list', items: list }); list = [] } }
@@ -132,7 +140,7 @@ function AnswerContent({ content }) {
   }
   flushList()
   return <div className="answer-content">
-    <div className="answer-label"><Sparkles size={14} />검색 결과</div>
+    <div className="answer-label"><Sparkles size={14} />{label}</div>
     {blocks.map((block, index) => block.type === 'heading' ? <h3 key={index}><InlineAnswerText text={block.text} /></h3> : block.type === 'list' ? <ul key={index}>{block.items.map((item, itemIndex) => <li key={itemIndex}><InlineAnswerText text={item} /></li>)}</ul> : <p key={index}><InlineAnswerText text={block.text} /></p>)}
   </div>
 }
@@ -141,27 +149,33 @@ function AiSearch({ onOpen }) {
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [messages, setMessages] = useState([])
+  const [mode, setMode] = useState('search')
   const ask = async (question = query) => {
     const clean = question.trim(); if (!clean || busy) return
-    setQuery(''); setBusy(true); setMessages((m) => [...m, { role: 'user', content: clean }])
+    const history = messages.filter((message) => message.mode === 'chat').slice(-8).map(({ role, content }) => ({ role, content }))
+    const requestMode = mode
+    setQuery(''); setBusy(true); setMessages((m) => [...m, { role: 'user', content: clean, mode: requestMode }])
     try {
-      const response = await fetch('/api/ai/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: clean }) })
+      const endpoint = requestMode === 'search' ? '/api/ai/search' : '/api/ai/chat'
+      const payload = requestMode === 'search' ? { query: clean } : { message: clean, history }
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const body = await response.json(); if (!response.ok) throw new Error(body.detail || '검색에 실패했습니다.')
-      setMessages((m) => [...m, { role: 'assistant', content: body.answer, sources: body.sources || [] }])
+      setMessages((m) => [...m, { role: 'assistant', content: body.answer, sources: body.sources || [], mode: requestMode }])
     } catch (error) { setMessages((m) => [...m, { role: 'assistant', error: true, content: error.message }]) }
     finally { setBusy(false) }
   }
   return <main className="page ai-page">
-    <div className="page-heading"><div><p className="eyebrow">AI DOCUMENT SEARCH</p><h1>AI 통합검색</h1><p>사내 문서를 근거로 질문에 답하고, 필요한 내용을 정리합니다.</p></div><span className="secure-badge"><ShieldCheck size={16} />사내 데이터에서만 검색</span></div>
+    <div className="page-heading"><div><p className="eyebrow">TEIN AI ASSISTANT</p><h1>{mode === 'search' ? 'AI 통합검색' : 'AI 대화'}</h1><p>{mode === 'search' ? '사내 문서를 근거로 필요한 내용을 찾아 정리합니다.' : '문서 검색 없이 일상 대화와 업무 아이디어를 자유롭게 나눕니다.'}</p></div>{mode === 'search' && <span className="secure-badge"><ShieldCheck size={16} />사내 데이터에서만 검색</span>}</div>
     <section className="chat-surface">
+      <div className="ai-mode-switch" role="tablist" aria-label="AI 모드"><button className={mode === 'search' ? 'active' : ''} onClick={() => setMode('search')} role="tab" aria-selected={mode === 'search'}><Search size={15} />문서 검색</button><button className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')} role="tab" aria-selected={mode === 'chat'}><MessageSquareText size={15} />일반 대화</button></div>
       {messages.length === 0 ? <div className="ai-welcome">
-        <div className="ai-orb"><Sparkles size={28} /></div><h2>무엇을 찾아드릴까요?</h2><p>파일명이나 정확한 문구를 몰라도 괜찮습니다.<br />업무, 날짜, 사람을 자연스럽게 질문해 보세요.</p>
-        <div className="suggestions">{suggestedQuestions.map((q) => <button key={q} onClick={() => ask(q)}><MessageSquareText size={16} />{q}<ChevronRight size={16} /></button>)}</div>
+        <div className="ai-orb"><Sparkles size={28} /></div><h2>{mode === 'search' ? '무엇을 찾아드릴까요?' : '무엇이든 편하게 물어보세요'}</h2><p>{mode === 'search' ? <>파일명이나 정확한 문구를 몰라도 괜찮습니다.<br />업무, 날짜, 사람을 자연스럽게 질문해 보세요.</> : <>문서 근거 없이 자유롭게 대화합니다.<br />업무 아이디어나 기술 질문도 가능합니다.</>}</p>
+        {mode === 'search' && <div className="suggestions">{suggestedQuestions.map((q) => <button key={q} onClick={() => ask(q)}><MessageSquareText size={16} />{q}<ChevronRight size={16} /></button>)}</div>}
       </div> : <div className="messages">{messages.map((m, index) => <div className={`message ${m.role}`} key={index}>
-        <div className="message-avatar">{m.role === 'user' ? '나' : <Sparkles size={17} />}</div><div className={`bubble ${m.error ? 'error' : ''}`}>{m.role === 'assistant' && !m.error ? <AnswerContent content={m.content} /> : <p>{m.content}</p>}
+        <div className="message-avatar">{m.role === 'user' ? '나' : <Sparkles size={17} />}</div><div className={`bubble ${m.error ? 'error' : ''}`}>{m.role === 'assistant' && !m.error ? <AnswerContent content={m.content} label={m.mode === 'chat' ? 'AI 답변' : '문서 검색 결과'} /> : <p>{m.content}</p>}
         {m.sources?.length > 0 && <div className="source-list"><span>참고한 문서 {m.sources.length}개</span>{m.sources.map((s) => <button key={s.id} onClick={() => onOpen(s.id)}><FileText size={15} /><div><strong>{s.filename}{s.page_number ? ` · ${s.page_number}페이지` : ''}</strong><small>{s.heading ? `${s.heading} — ` : ''}{s.snippet}</small></div><ChevronRight size={15} /></button>)}</div>}</div>
-      </div>)}{busy && <div className="message assistant"><div className="message-avatar"><Sparkles size={17} /></div><div className="bubble thinking"><i /><i /><i />문서를 찾고 있습니다</div></div>}</div>}
-      <div className="composer"><textarea value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }} placeholder="예: 올해 발견된 보안 취약점을 날짜별로 정리해줘" rows="1" /><button onClick={() => ask()} disabled={!query.trim() || busy} aria-label="질문 보내기"><Send size={19} /></button><p>근거 문서에서 확인되지 않는 내용은 답변하지 않습니다.</p></div>
+      </div>)}{busy && <div className="message assistant"><div className="message-avatar"><Sparkles size={17} /></div><div className="bubble thinking"><i /><i /><i />{mode === 'search' ? '문서를 찾고 있습니다' : '답변을 준비하고 있습니다'}</div></div>}</div>}
+      <div className="composer"><textarea value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }} placeholder={mode === 'search' ? '예: 올해 발견된 보안 취약점을 날짜별로 정리해줘' : '무엇이든 편하게 물어보세요'} rows="1" /><button onClick={() => ask()} disabled={!query.trim() || busy} aria-label="질문 보내기"><Send size={19} /></button><p>{mode === 'search' ? '근거 문서에서 확인되지 않는 내용은 답변하지 않습니다.' : '일반 대화 내용은 사내 문서 검색에 사용하지 않습니다.'}</p></div>
     </section>
   </main>
 }
@@ -171,6 +185,14 @@ function Reports({ reports, onOpen, onUpload }) {
   return <main className="page"><div className="page-heading"><div><p className="eyebrow">WEEKLY REPORTS</p><h1>업무일지</h1><p>기존 주간업무일지를 사람별·기간별로 모아봅니다.</p></div><button className="primary" onClick={onUpload}><Plus size={18} />업무일지 추가</button></div>
     <section className="report-grid">{batches.map((item) => <article className="report-card" key={item.id} onClick={() => onOpen(item.id)}><div className="report-card-top"><FileGlyph item={item} size="large" /><Status value={item.status} /></div><h3>{item.author || item.original_filename}</h3><p>{item.department || '부서 미지정'} · {item.report_date || '날짜 미지정'}</p><div className="report-divider" /><div className="report-stat"><span>파일</span><strong>{item.original_filename}</strong></div><button>상세 업무 보기<ChevronRight size={16} /></button></article>)}</section>
     {batches.length === 0 && <section className="content-card"><EmptyState /></section>}
+  </main>
+}
+
+function VulnerabilityArchive({ reports, onOpen, onUpload }) {
+  const documents = useMemo(() => reports.filter(isVulnerabilityDocument), [reports])
+  return <main className="page"><div className="page-heading"><div><p className="eyebrow">VULNERABILITY ARCHIVE</p><h1>취약점 문서함</h1><p>취약점 분석, 조치 결과, 보안 점검 문서를 별도로 보관하고 검색합니다.</p></div><button className="primary" onClick={onUpload}><Upload size={18} />문서 업로드</button></div>
+    <section className="report-grid">{documents.map((item) => <article className="report-card vulnerability-card" key={item.id} onClick={() => onOpen(item.id)}><div className="report-card-top"><FileGlyph item={item} size="large" /><Status value={item.status} /></div><h3>{item.original_filename}</h3><p>{extensionOf(item).toUpperCase()} · 업로드 {formatDate(item.created_at)}</p><div className="report-divider" /><div className="report-stat"><span>AI 검색 상태</span><strong>{item.index_status === 'indexed' ? '검색 준비 완료' : item.index_status === 'failed' ? '인덱싱 실패' : '인덱싱 중'}</strong></div><button>문서 상세 보기<ChevronRight size={16} /></button></article>)}</section>
+    {!documents.length && <section className="content-card"><EmptyState query="취약점" /></section>}
   </main>
 }
 
@@ -200,18 +222,29 @@ function UploadDialog({ open, onClose, onComplete }) {
   return <div className="dialog-backdrop" onMouseDown={onClose}><div className="dialog" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true"><div className="dialog-head"><div><h2>문서 업로드</h2><p>최대 10개 파일을 한 번에 등록할 수 있습니다.</p></div><button className="icon-button" onClick={onClose}><X size={20} /></button></div>
     <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); choose(e.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><input ref={inputRef} type="file" multiple hidden accept=".pdf,.ppt,.pptx,.hwp,.hwpx,.docx,.xls,.xlsx" onChange={(e) => choose(e.target.files)} /><span><Upload size={25} /></span><strong>파일을 끌어놓거나 클릭해서 선택</strong><p>PDF, PPT, 한글, Word, Excel · 파일당 최대 30MB</p></div>
     {files.length > 0 && <div className="selected-files">{files.map((file) => <div key={`${file.name}-${file.size}`}><FileText size={17} /><span>{file.name}</span><small>{formatBytes(file.size)}</small></div>)}</div>}{error && <p className="form-error">{error}</p>}
-    <div className="dialog-actions"><button className="secondary" onClick={onClose}>취소</button><button className="primary" disabled={!files.length || busy} onClick={upload}>{busy ? <LoaderCircle className="spin" size={18} /> : <Upload size={18} />}{busy ? '업로드 중' : `${files.length || ''}개 문서 업로드`}</button></div>
+    <div className="dialog-actions"><button className="secondary" onClick={onClose}>취소</button><button className="primary" disabled={!files.length || busy} onClick={upload}>{busy ? <LoaderCircle className="spin" size={18} /> : <Upload size={18} />}{busy ? '업로드 중' : files.length ? `${files.length}개 문서 업로드` : '문서 업로드'}</button></div>
   </div></div>
 }
 
 function summarySections(summary) {
   const sections = []; let current = { title: '문서 요약', items: [] }
+  const isWorkGroup = (value) => (
+    /^\[[^\]]+\]$/.test(value)
+    || /^[월화수목금]\(\d{1,2}\)/.test(value)
+    || /\([^)]*(?:방문|원격|동행|사내)[^)]*\)\s*$/.test(value)
+    || /(?:연구원|병원|대학교|시청|공사|센터|은행|기관|부서)\s*$/.test(value)
+  )
   for (const raw of (summary || '').split('\n')) {
     const line = raw.trim(); if (!line) continue
     const heading = line.match(/^#{1,3}\s+(.+)$/)
     if (heading) { if (current.items.length) sections.push(current); current = { title: heading[1], items: [] }; continue }
     const item = line.match(/^(?:[-•▪]|\d+[.)])\s*(.+)$/)
-    if (item) { current.items.push(item[1]); continue }
+    if (item) {
+      const value = item[1]
+      if (!current.items.length || isWorkGroup(value)) current.items.push(value)
+      else current.items[current.items.length - 1] += `\n${value}`
+      continue
+    }
     if (current.items.length) current.items[current.items.length - 1] += ` ${line}`
     else current.items.push(line)
   }
@@ -226,21 +259,41 @@ function SummarySections({ summary }) {
   return <div className="summary-sections">{sections.map((section, index) => { const [type, Icon] = typeFor(section.title); return <article className={`summary-section ${type}`} key={`${section.title}-${index}`}><header><span><Icon size={15} /></span><h4>{section.title}</h4><small>{section.items.length}개 항목</small></header><ul>{section.items.map((entry, itemIndex) => <li key={itemIndex}>{entry}</li>)}</ul></article> })}</div>
 }
 
-function DetailDrawer({ id, onClose }) {
+function TrashArchive({ reports, onOpen, onRestore }) {
+  const trashedReports = reports.filter((item) => item.deleted_at)
+  return <main className="page"><div className="page-heading"><div><p className="eyebrow">RECYCLE BIN</p><h1>휴지통</h1><p>삭제한 문서는 여기에서 복원할 수 있습니다. 휴지통 문서는 AI 검색에서 제외됩니다.</p></div></div>
+    <section className="content-card"><div className="table-wrap"><table><thead><tr><th>문서명</th><th>분류</th><th>삭제일</th><th>크기</th><th></th></tr></thead><tbody>{trashedReports.map((item) => <tr key={item.id} onClick={() => onOpen(item.id)}><td><div className="document-name"><FileGlyph item={item} /><div><strong>{item.original_filename}</strong><span>업로드 {formatDate(item.created_at)}</span></div></div></td><td><span className={`category-pill ${isVulnerabilityDocument(item) ? 'vulnerability' : item.source_type === 'pptx' || item.source_type === 'ppt' ? 'weekly' : 'general'}`}>{isVulnerabilityDocument(item) ? '보안 취약점' : item.source_type === 'pptx' || item.source_type === 'ppt' ? '업무일지' : '일반 문서'}</span></td><td>{formatDate(item.deleted_at)}</td><td>{formatBytes(item.file_size)}</td><td><div className="trash-actions"><button onClick={(e) => { e.stopPropagation(); onRestore(item.id) }}><RotateCcw size={15} />복원</button></div></td></tr>)}</tbody></table>{!trashedReports.length && <EmptyState query="" />}</div></section>
+  </main>
+}
+
+function DetailDrawer({ id, onClose, onTrash }) {
   const [item, setItem] = useState(null)
   useEffect(() => { if (id) fetch(`/api/reports/${id}`).then((r) => r.json()).then(setItem) }, [id])
   if (!id) return null
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><span>문서 상세</span><button className="icon-button" onClick={onClose}><X size={20} /></button></div>{!item ? <div className="loading-row"><LoaderCircle className="spin" />불러오는 중</div> : <><div className="drawer-title"><FileGlyph item={item} size="large" /><div><h2>{item.original_filename}</h2><Status value={item.status} /></div></div><dl><div><dt>작성자</dt><dd>{item.author || '-'}</dd></div><div><dt>부서</dt><dd>{item.department || '-'}</dd></div><div><dt>기준일</dt><dd>{item.report_date || '-'}</dd></div><div><dt>파일 크기</dt><dd>{formatBytes(item.file_size)}</dd></div></dl><section className="detail-summary"><div className="detail-summary-head"><div><span>AI 분석 요약</span><small>문서에서 추출한 업무와 일정</small></div><span className="summary-badge">{item.index_status === 'indexed' ? '검색 준비 완료' : '분석 결과'}</span></div>{item.summary ? <SummarySections summary={item.summary} /> : item.status === 'failed' ? <div className="summary-empty error-text">{item.error_message}</div> : <div className="summary-empty">문서 분석이 완료되면 요약이 표시됩니다.</div>}</section><a className="download-button" href={`/api/reports/${id}/download`}><Download size={18} />원본 다운로드</a></>}</aside></div>
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><span>문서 상세</span><button className="icon-button" onClick={onClose}><X size={20} /></button></div>{!item ? <div className="loading-row"><LoaderCircle className="spin" />불러오는 중</div> : <><div className="drawer-title"><FileGlyph item={item} size="large" /><div><h2>{item.original_filename}</h2><Status value={item.status} /></div></div><dl><div><dt>작성자</dt><dd>{item.author || '-'}</dd></div><div><dt>부서</dt><dd>{item.department || '-'}</dd></div><div><dt>기준일</dt><dd>{item.report_date || '-'}</dd></div><div><dt>파일 크기</dt><dd>{formatBytes(item.file_size)}</dd></div></dl><section className="detail-summary"><div className="detail-summary-head"><div><span>AI 분석 요약</span><small>문서에서 추출한 업무와 일정</small></div><span className="summary-badge">{item.index_status === 'indexed' ? '검색 준비 완료' : '분석 결과'}</span></div>{item.summary ? <SummarySections summary={item.summary} /> : item.status === 'failed' ? <div className="summary-empty error-text">{item.error_message}</div> : <div className="summary-empty">문서 분석이 완료되면 요약이 표시됩니다.</div>}</section>{item.preview_path && <section className="document-preview"><div className="detail-summary-head"><div><span>원문 미리보기</span><small>문서 안의 이미지와 원본 배치를 유지합니다.</small></div></div><iframe title={`${item.original_filename} 원문 미리보기`} src={`/api/reports/${id}/preview#view=FitH&toolbar=0`} /></section>}<a className="download-button" href={`/api/reports/${id}/download`}><Download size={18} />원본 다운로드</a>{!item.deleted_at && <button className="trash-document" onClick={() => onTrash(item.id)}><Trash2 size={16} />휴지통으로 이동</button>}</>}</aside></div>
 }
 
 export default function App() {
   const [active, setActive] = useState('library'); const [mobileNav, setMobileNav] = useState(false)
   const [reports, setReports] = useState([]); const [loading, setLoading] = useState(true); const [query, setQuery] = useState('')
-  const [uploadOpen, setUploadOpen] = useState(false); const [detailId, setDetailId] = useState(null); const [toast, setToast] = useState('')
-  const loadReports = async (keyword = '') => { setLoading(true); try { const response = await fetch(`/api/reports?limit=100${keyword ? `&keyword=${encodeURIComponent(keyword)}` : ''}`); setReports(await response.json()) } finally { setLoading(false) } }
+  const [uploadOpen, setUploadOpen] = useState(false); const [detailId, setDetailId] = useState(null); const [toast, setToast] = useState(''); const [trash, setTrash] = useState([])
+  const lastReportQuery = useRef('')
+  const loadReports = async (keyword = '', { silent = false } = {}) => { if (!silent) { lastReportQuery.current = keyword; setLoading(true) } try { const response = await fetch(`/api/reports?limit=100${keyword ? `&keyword=${encodeURIComponent(keyword)}` : ''}`); if (!response.ok) throw new Error('문서 목록을 불러오지 못했습니다.'); setReports(await response.json()) } catch (error) { if (!silent) setToast(error.message) } finally { if (!silent) setLoading(false) } }
   useEffect(() => { loadReports() }, [])
+  const loadTrash = async () => { const response = await fetch('/api/reports?trash=true&limit=100'); if (response.ok) setTrash(await response.json()) }
+  const moveToTrash = async (id) => { if (!window.confirm('이 문서를 휴지통으로 이동할까요?')) return; const response = await fetch(`/api/reports/${id}/trash`, { method: 'POST' }); if (!response.ok) return setToast('문서를 휴지통으로 옮기지 못했습니다.'); setDetailId(null); setToast('문서를 휴지통으로 옮겼습니다.'); loadReports(); loadTrash() }
+  const restoreFromTrash = async (id) => { const response = await fetch(`/api/reports/${id}/restore`, { method: 'POST' }); if (!response.ok) return setToast('문서를 복원하지 못했습니다.'); setToast('문서를 복원하고 검색 인덱싱을 시작했습니다.'); loadReports(); loadTrash() }
+  const indexingInProgress = useMemo(() => reports.some((report) => (
+    ['uploaded', 'processing'].includes(report.status)
+    || (report.status === 'completed' && ['pending', 'indexing'].includes(report.index_status))
+  )), [reports])
+  useEffect(() => {
+    if (!indexingInProgress) return undefined
+    const timer = setInterval(() => loadReports(lastReportQuery.current, { silent: true }), 3000)
+    return () => clearInterval(timer)
+  }, [indexingInProgress])
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 3500); return () => clearTimeout(timer) }, [toast])
-  const navigate = (id) => { setActive(id); setMobileNav(false) }
+  const navigate = (id) => { setActive(id); setMobileNav(false); if (id === 'trash') loadTrash() }
   useEffect(() => {
     const context = document.modelContext
     if (!context?.registerTool) return undefined
@@ -261,11 +314,11 @@ export default function App() {
   }, [])
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}><div className="brand"><img src="/tein-logo.png" alt="TEIN" /><span>SYSTEM</span></div><nav>{navItems.map(({ id, label, icon: Icon }) => <button className={active === id ? 'active' : ''} key={id} onClick={() => navigate(id)}><Icon size={19} />{label}{id === 'ai' && <span className="ai-tag">AI</span>}</button>)}</nav></aside>
-    <div className="workspace"><header><button className="mobile-menu" onClick={() => setMobileNav((v) => !v)}><Menu /></button><div className="global-search" onClick={() => navigate('ai')}><Search size={18} /><span>문서와 사내 지식을 검색하세요</span><kbd>⌘ K</kbd></div><button className="header-upload" onClick={() => setUploadOpen(true)}><Plus size={18} />새 문서</button></header>
-      {active === 'library' && <Library reports={reports} loading={loading} query={query} setQuery={setQuery} onSearch={(e) => { e.preventDefault(); loadReports(query) }} onUpload={() => setUploadOpen(true)} onOpen={setDetailId} />}
-      {active === 'ai' && <AiSearch onOpen={setDetailId} />}{active === 'reports' && <Reports reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'admin' && <Admin reports={reports} />}
+    <div className="workspace">
+      {active === 'library' && <Library reports={reports} loading={loading} query={query} setQuery={setQuery} onSearch={(e) => { e.preventDefault(); loadReports(query) }} onUpload={() => setUploadOpen(true)} onOpen={setDetailId} onTrash={moveToTrash} />}
+      {active === 'ai' && <AiSearch onOpen={setDetailId} />}{active === 'vulnerabilities' && <VulnerabilityArchive reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'reports' && <Reports reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'trash' && <TrashArchive reports={trash} onOpen={setDetailId} onRestore={restoreFromTrash} />}{active === 'admin' && <Admin reports={reports} />}
     </div>
     <UploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} onComplete={(body) => { setUploadOpen(false); setToast(`${body.reports.length}개 문서 업로드를 시작했습니다.`); loadReports() }} />
-    <DetailDrawer id={detailId} onClose={() => setDetailId(null)} />{toast && <div className="toast"><Check size={18} />{toast}</div>}
+    <DetailDrawer id={detailId} onClose={() => setDetailId(null)} onTrash={moveToTrash} />{toast && <div className="toast"><Check size={18} />{toast}</div>}
   </div>
 }

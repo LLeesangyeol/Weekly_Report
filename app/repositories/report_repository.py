@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import String, delete, or_, desc, select
 from sqlalchemy.orm import Session
 
-from app.models import DocumentChunk, Report, ReportStatus
+from app.models import DocumentChunk, Report, ReportStatus, utcnow
 
 
 class ReportRepository:
@@ -59,8 +59,11 @@ class ReportRepository:
         statement = statement.order_by(desc(Report.created_at))
         return self.session.scalar(statement)
 
-    def list(self, *, limit: int = 100, offset: int = 0) -> list[Report]:
-        statement = select(Report).order_by(desc(Report.created_at)).limit(limit).offset(offset)
+    def list(self, *, limit: int = 100, offset: int = 0, include_deleted: bool = False) -> list[Report]:
+        statement = select(Report)
+        if not include_deleted:
+            statement = statement.where(Report.deleted_at.is_(None))
+        statement = statement.order_by(desc(Report.created_at)).limit(limit).offset(offset)
         return list(self.session.scalars(statement))
 
     def search(
@@ -72,7 +75,7 @@ class ReportRepository:
         report_date: date | None = None,
         limit: int = 100,
     ) -> list[Report]:
-        statement = select(Report)
+        statement = select(Report).where(Report.deleted_at.is_(None))
         if keyword:
             pattern = f"%{keyword}%"
             statement = statement.where(or_(
@@ -131,4 +134,12 @@ class ReportRepository:
     def mark_index_failed(self, report: Report, error: str) -> None:
         report.index_status = "failed"
         report.error_message = error[:2000]
+        self.session.commit()
+
+    def move_to_trash(self, report: Report) -> None:
+        report.deleted_at = utcnow()
+        self.session.commit()
+
+    def restore(self, report: Report) -> None:
+        report.deleted_at = None
         self.session.commit()

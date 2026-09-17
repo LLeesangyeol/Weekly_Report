@@ -80,6 +80,17 @@ def _is_summary_query(query: str) -> bool:
     return any(value in query for value in ("요약", "정리", "묶어", "현황", "무엇을 했"))
 
 
+def _is_vulnerability_findings_query(query: str) -> bool:
+    """Distinguish a vulnerability finding from a weekly task merely mentioning security."""
+    return "취약점" in query and any(value in query for value in ("발견", "점검", "결과", "조치", "목록", "정리", "현황"))
+
+
+def _is_vulnerability_report(report: Report) -> bool:
+    filename = report.original_filename or ""
+    text = _report_text(report)
+    return "취약점" in filename or ("점검 내용" in text and "점검 결과" in text and "조치 내용" in text)
+
+
 def _compact(value: str) -> str:
     return re.sub(r"[^가-힣a-z0-9]", "", value.casefold())
 
@@ -144,13 +155,21 @@ def _report_text(report: Report) -> str:
     )))
 
 
-def _snippet(text: str, terms: list[str], length: int = 420) -> str:
+def _snippet(text: str, terms: list[str], length: int = 620) -> str:
     normalized = re.sub(r"\s+", " ", text).strip()
-    positions = [normalized.casefold().find(term) for term in terms]
-    positions = [position for position in positions if position >= 0]
-    start = max(0, (min(positions) if positions else 0) - 55)
-    value = normalized[start:start + length]
-    return ("…" if start else "") + value + ("…" if start + length < len(normalized) else "")
+    folded = normalized.casefold()
+    positions = [folded.find(term.casefold()) for term in terms if term]
+    positions = sorted({position for position in positions if position >= 0})[:2]
+    if not positions:
+        return normalized[:length] + ("…" if len(normalized) > length else "")
+    windows: list[str] = []
+    for position in positions:
+        start = max(0, position - 180)
+        end = min(len(normalized), position + length - 180)
+        value = ("…" if start else "") + normalized[start:end] + ("…" if end < len(normalized) else "")
+        if not windows or value != windows[-1]:
+            windows.append(value)
+    return "\n\n".join(windows)
 
 
 def _evidence_fallback(query: str, hits: list[SearchHit]) -> str:
@@ -233,6 +252,23 @@ def _date_work_summary(query: str, hits: list[SearchHit]) -> str:
     return "\n".join(lines)
 
 
+def _vulnerability_findings_summary(hits: list[SearchHit]) -> str:
+    lines = [f"실제 취약점 점검 결과 문서 {len(hits)}개를 확인했습니다."]
+    for source_number, hit in enumerate(hits, 1):
+        report = hit.report
+        when = report.report_date.isoformat() if report.report_date else "날짜 미지정"
+        lines.append(f"## {when} · {report.original_filename}")
+        summary_lines = [line.strip() for line in (report.summary or "").splitlines() if line.strip()]
+        # The dedicated report summary has already selected point/result/action fields.
+        visible = [line for line in summary_lines if not line.startswith("## 점검 개요")][:10]
+        if visible:
+            lines.extend(visible)
+        else:
+            lines.append(f"- 관련 점검 내용: {_snippet(hit.snippet, ['점검 내용', '조치 내용'], length=420)}")
+        lines.append(f"[문서 {source_number}]")
+    return "\n".join(lines)
+
+
 class KnowledgeSearchService:
     """Keyword-first retrieval boundary ready to be replaced by Qdrant hybrid search."""
 
@@ -254,9 +290,12 @@ class KnowledgeSearchService:
         meaningful_terms = _meaningful_terms(query)
         date_terms = _date_terms(query)
         requested_month = _requested_month(query)
+        vulnerability_findings = _is_vulnerability_findings_query(query)
         hits: list[SearchHit] = []
         for report in self.repository.list(limit=500):
             if report.status != ReportStatus.COMPLETED.value:
+                continue
+            if vulnerability_findings and not _is_vulnerability_report(report):
                 continue
             if requested_month and (not report.report_date or (report.report_date.year, report.report_date.month) != requested_month):
                 continue
@@ -318,6 +357,8 @@ class KnowledgeSearchService:
                 hits = author_hits
         if not hits:
             return NO_EVIDENCE_ANSWER, [], "no_results"
+        if _is_vulnerability_findings_query(query):
+            return _vulnerability_findings_summary(hits), hits, "vulnerability_summary"
         if date_query:
             return _date_work_summary(query, hits), hits, "date_summary"
         personal_leave = _personal_leave_fallback(query, hits)

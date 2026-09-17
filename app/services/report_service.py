@@ -15,6 +15,8 @@ from app.repositories.report_repository import ReportRepository
 from app.services.document_service import DocumentService
 from app.services.ollama_service import OllamaService
 from app.services.weekly_template_service import parse_weekly_report_template
+from app.services.vulnerability_summary_service import summarize_vulnerability_report
+from app.services.document_preview_service import DocumentPreviewService, PreviewError
 from app.services.chunking_service import chunk_document
 from app.services.vector_store_service import get_vector_store
 
@@ -50,6 +52,7 @@ class ReportProcessor:
         self.session_factory = session_factory
         self.document_service = document_service or DocumentService(settings)
         self.ollama_service = ollama_service or OllamaService(settings)
+        self.preview_service = DocumentPreviewService(settings)
 
     async def process(self, report_id: int) -> None:
         with self.session_factory() as session:
@@ -64,7 +67,16 @@ class ReportProcessor:
                 extracted = self.document_service.extract(Path(report.file_path))
                 structured = parse_weekly_report_template(extracted)
                 if structured is None:
-                    summary = await self.ollama_service.summarize_document(extracted)
+                    vulnerability_summary = summarize_vulnerability_report(extracted) if "취약점" in report.original_filename else None
+                    if vulnerability_summary:
+                        summary = vulnerability_summary
+                    elif len(extracted) > 180_000:
+                        summary = (
+                            "대용량 참고 문서입니다. 문서 전체를 검색 인덱스에 등록했으며, "
+                            "AI 통합검색에서 취약점 항목·점검 기준·조치 방법으로 찾아볼 수 있습니다."
+                        )
+                    else:
+                        summary = await self.ollama_service.summarize_document(extracted)
                     from app.schemas import StructuredReport
                     structured = StructuredReport(
                         report_date=report.report_date.isoformat() if report.report_date else None,
@@ -74,6 +86,10 @@ class ReportProcessor:
                 else:
                     summary = await self.ollama_service.summarize(structured)
                 values = structured.model_dump()
+                try:
+                    preview_path = str(self.preview_service.create(Path(report.file_path), report.id))
+                except PreviewError:
+                    preview_path = None
                 repository.complete(report, {
                     "report_date": report.report_date or _parse_date(structured.report_date),
                     "department": report.department or structured.department,
@@ -86,6 +102,7 @@ class ReportProcessor:
                     "extracted_text": extracted,
                     "structured_json": values,
                     "summary": summary,
+                    "preview_path": preview_path,
                 })
                 chunks = chunk_document(
                     extracted,

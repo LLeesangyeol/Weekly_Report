@@ -24,6 +24,18 @@ def test_upload_api_creates_record(client, pptx_bytes, session_factory):
         assert report.stored_filename != "weekly.pptx"
 
 
+def test_uploading_a_trashed_duplicate_restores_it(client, pptx_bytes, session_factory):
+    first = client.post("/api/reports", files={"file": ("restore.pptx", pptx_bytes, PPTX_MIME)})
+    report_id = first.json()["id"]
+    assert client.post(f"/api/reports/{report_id}/trash").status_code == 200
+
+    repeated = client.post("/api/reports", files={"file": ("restore.pptx", pptx_bytes, PPTX_MIME)})
+    assert repeated.status_code == 202
+    assert repeated.json()["id"] == report_id
+    with session_factory() as session:
+        assert ReportRepository(session).get(report_id).deleted_at is None
+
+
 def test_report_list_searches_author_and_home_page(client, pptx_bytes):
     client.post(
         "/api/reports",
@@ -35,7 +47,7 @@ def test_report_list_searches_author_and_home_page(client, pptx_bytes):
     assert len(response.json()) == 1
     page = client.get("/", params={"keyword": "searchable"})
     assert page.status_code == 200
-    assert "TEIN Knowledge" in page.text
+    assert "TEIN System" in page.text
     assert "src=\"/tein-logo.png\"" not in page.text  # asset is loaded by the React bundle
     assert client.get("/", params={"report_date": ""}).status_code == 200
     assert client.get("/api/reports", params={"report_date": ""}).status_code == 200

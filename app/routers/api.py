@@ -15,7 +15,7 @@ from app.database import SessionLocal, get_db
 from app.models import DocumentChunk, Report
 from app.repositories.report_repository import ReportRepository
 from app.schemas import (
-    BatchCreated, BatchReportCreated, KnowledgeSearchRequest, KnowledgeSearchResponse,
+    BatchCreated, BatchReportCreated, GeneralChatRequest, KnowledgeSearchRequest, KnowledgeSearchResponse,
     KnowledgeSource, ReportCreated, ReportListItem, ReportRead, ReportStatusRead,
 )
 from app.services.knowledge_search_service import KnowledgeSearchService
@@ -98,6 +98,18 @@ async def search_knowledge(
     )
 
 
+@router.post("/ai/chat", response_model=KnowledgeSearchResponse)
+async def general_chat(
+    request: GeneralChatRequest,
+    settings: Settings = Depends(get_settings),
+) -> KnowledgeSearchResponse:
+    answer = await OllamaService(settings).general_chat(
+        request.message,
+        [turn.model_dump() for turn in request.history],
+    )
+    return KnowledgeSearchResponse(answer=answer, mode="chat", sources=[])
+
+
 @router.post("/reports/{report_id}/reindex", status_code=status.HTTP_202_ACCEPTED)
 def reindex_report(
     report_id: int,
@@ -114,6 +126,29 @@ def reindex_report(
     db.commit()
     background_tasks.add_task(processor.reindex, report_id)
     return {"id": report_id, "index_status": "queued"}
+
+
+@router.post("/reports/{report_id}/trash")
+def trash_report(report_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, object]:
+    report = ReportRepository(db).get(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    ReportRepository(db).move_to_trash(report)
+    get_vector_store(settings).delete_report(report_id)
+    return {"id": report_id, "deleted_at": report.deleted_at}
+
+
+@router.post("/reports/{report_id}/restore")
+def restore_report(report_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), processor: ReportProcessor = Depends(get_report_processor)) -> dict[str, object]:
+    report = ReportRepository(db).get(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    ReportRepository(db).restore(report)
+    if report.extracted_text:
+        report.index_status = "queued"
+        db.commit()
+        background_tasks.add_task(processor.reindex, report_id)
+    return {"id": report_id, "restored": True}
 
 
 @router.post("/index/rebuild", status_code=status.HTTP_202_ACCEPTED)
@@ -206,6 +241,9 @@ async def upload_report(
     existing = ReportRepository(db).get_by_checksum(stored.checksum_sha256, stored.original_filename)
     if existing is not None:
         stored.path.unlink(missing_ok=True)
+        if existing.deleted_at:
+            ReportRepository(db).restore(existing)
+            background_tasks.add_task(processor.process, existing.id)
         return ReportCreated(id=existing.id, status=existing.status, status_url=f"/api/reports/{existing.id}/status")
     try:
         report = ReportRepository(db).create(
@@ -261,6 +299,9 @@ async def upload_report_batch(
             if existing is not None:
                 stored.path.unlink(missing_ok=True)
                 saved_paths.remove(stored.path)
+                if existing.deleted_at:
+                    ReportRepository(db).restore(existing)
+                    background_tasks.add_task(processor.process, existing.id)
                 created.append(existing)
                 continue
             report = ReportRepository(db).create(
@@ -299,10 +340,13 @@ def list_reports(
     author: str | None = Query(None, max_length=200),
     department: str | None = Query(None, max_length=200),
     report_date: str | None = Query(None),
+    trash: bool = Query(False),
     db: Session = Depends(get_db),
 ) -> list:
     parsed_date = _optional_date(report_date)
     repository = ReportRepository(db)
+    if trash:
+        return [report for report in repository.list(limit=limit, offset=offset, include_deleted=True) if report.deleted_at]
     if any((keyword, author, department, parsed_date)):
         return repository.search(keyword=keyword, author=author, department=department, report_date=parsed_date, limit=limit)
     return repository.list(limit=limit, offset=offset)
@@ -340,6 +384,18 @@ def download_report(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="원본 파일을 찾을 수 없습니다.") from exc
     return FileResponse(path, media_type=report.content_type, filename=report.original_filename)
+
+
+@router.get("/reports/{report_id}/preview")
+def preview_report(report_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    report = ReportRepository(db).get(report_id)
+    if report is None or not report.preview_path:
+        raise HTTPException(status_code=404, detail="문서 미리보기가 아직 준비되지 않았습니다.")
+    try:
+        path = StorageService(settings).safe_download_path(report.preview_path)
+    except (PermissionError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail="문서 미리보기를 찾을 수 없습니다.") from exc
+    return FileResponse(path, media_type="application/pdf", filename=f"{report.original_filename}.pdf")
 
 
 @router.get("/health")
