@@ -11,7 +11,7 @@ WEEKDAY_INDEX = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "�
 DAY_PATTERN = re.compile(r"([월화수목금토일])\s*\(\s*(\d{1,2})\s*\)")
 
 
-def _schedule_date(report_date: date, day_label: str) -> date | None:
+def resolve_schedule_date(report_date: date, day_label: str) -> date | None:
     matched = DAY_PATTERN.search(day_label)
     if not matched:
         return None
@@ -60,7 +60,7 @@ def calendar_events(
         if report.deleted_at is not None or report.report_date is None:
             continue
         for day_label, schedule in _schedule_rows(report.weekly_schedule):
-            event_date = _schedule_date(report.report_date, day_label)
+            event_date = resolve_schedule_date(report.report_date, day_label)
             if event_date is None or (start and event_date < start) or (end and event_date > end):
                 continue
             key = (report.id, event_date, schedule)

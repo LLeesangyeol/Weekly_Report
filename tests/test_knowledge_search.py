@@ -334,6 +334,40 @@ async def test_date_answer_explains_when_completed_work_has_no_day(db, settings)
 
 
 @pytest.mark.asyncio
+async def test_date_and_author_question_requires_both_exact_month_day_and_author(db, settings):
+    repository = ReportRepository(db)
+    cases = (
+        ("이동훈", date(2026, 8, 3), "화(04)", "8월 이동훈 업무"),
+        ("김태형", date(2026, 8, 3), "화(04)", "8월 다른 사람 업무"),
+        ("이동훈", date(2026, 8, 31), "금(04)", "9월 이동훈 업무"),
+    )
+    for number, (author, report_date, day_label, work) in enumerate(cases, start=1):
+        report = repository.create(
+            original_filename=f"주간업무일지-{number}.pptx", stored_filename=f"exact-{number}.pptx",
+            file_path=str(settings.upload_dir / f"exact-{number}.pptx"), file_size=10,
+            content_type="application/pptx", source_type="pptx", model_name="test-model",
+            author=author, report_date=report_date,
+        )
+        report.status = ReportStatus.COMPLETED.value
+        report.structured_json = {
+            "completed_work": [{"day": day_label, "work": work}],
+            "weekly_schedule": [{"day": day_label, "schedule": f"{work} 일정"}],
+        }
+    db.commit()
+
+    answer, hits, mode = await KnowledgeSearchService(db, NoModelCallOllama()).answer(
+        "8월 4일에 이동훈이 진행한 업무를 알려줘", 30
+    )
+
+    assert mode == "date_summary"
+    assert len(hits) == 1
+    assert hits[0].report.author == "이동훈"
+    assert "8월 이동훈 업무" in answer
+    assert "8월 다른 사람 업무" not in answer
+    assert "9월 이동훈 업무" not in answer
+
+
+@pytest.mark.asyncio
 async def test_last_month_query_excludes_other_months(db, settings, monkeypatch):
     import app.services.knowledge_search_service as search_module
 

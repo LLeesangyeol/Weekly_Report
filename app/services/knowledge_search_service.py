@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Report, ReportStatus
 from app.repositories.report_repository import ReportRepository
+from app.services.calendar_service import resolve_schedule_date
 from app.services.ollama_service import OllamaError, OllamaService
 from app.services.vector_store_service import VectorStoreService
 
@@ -207,6 +208,47 @@ def _requested_day_numbers(query: str) -> set[int]:
     return {int(value) for value in values if 1 <= int(value) <= 31}
 
 
+def _requested_calendar_dates(query: str) -> list[tuple[int | None, int, int]]:
+    """Parse explicit calendar dates. A missing year intentionally matches any year."""
+    values: list[tuple[int | None, int, int]] = []
+    for year, month, day in re.findall(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", query):
+        values.append((int(year), int(month), int(day)))
+    without_korean_year = re.sub(r"\d{4}\s*년\s*", "", query)
+    for month, day in re.findall(r"(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일", without_korean_year):
+        values.append((None, int(month), int(day)))
+    for year, month, day in re.findall(r"(?<!\d)(\d{4})[-./](\d{1,2})[-./](\d{1,2})(?!\d)", query):
+        values.append((int(year), int(month), int(day)))
+    return list(dict.fromkeys(
+        value for value in values
+        if 1 <= value[1] <= 12 and 1 <= value[2] <= 31
+    ))
+
+
+def _calendar_date_matches(value: date, requested: list[tuple[int | None, int, int]]) -> bool:
+    return any(
+        value.month == month and value.day == day and (year is None or value.year == year)
+        for year, month, day in requested
+    )
+
+
+def _item_calendar_date(report: Report, item: object) -> date | None:
+    if not isinstance(item, dict) or report.report_date is None:
+        return None
+    day_label = str(item.get("day") or "").strip()
+    if not day_label:
+        return None
+    if resolved := resolve_schedule_date(report.report_date, day_label):
+        return resolved
+    matched = re.search(r"(?:(\d{4})\D+)?(\d{1,2})\s*월\s*(\d{1,2})\s*일", day_label)
+    if not matched:
+        return None
+    year = int(matched.group(1) or report.report_date.year)
+    try:
+        return date(year, int(matched.group(2)), int(matched.group(3)))
+    except ValueError:
+        return None
+
+
 def _day_matches(value: object, requested_days: set[int]) -> bool:
     if not requested_days or not value:
         return False
@@ -227,6 +269,21 @@ def _items_for_requested_days(value: object, requested_days: set[int]) -> list[s
     return filtered
 
 
+def _items_for_requested_date(report: Report, value: object, query: str) -> list[str]:
+    requested_dates = _requested_calendar_dates(query)
+    if not requested_dates:
+        return _items_for_requested_days(value, _requested_day_numbers(query))
+    if not isinstance(value, list):
+        return []
+    return [
+        rendered
+        for item in value
+        if (item_date := _item_calendar_date(report, item)) is not None
+        and _calendar_date_matches(item_date, requested_dates)
+        for rendered in _structured_items([item])
+    ]
+
+
 def _has_requested_day_content(report: Report, requested_days: set[int]) -> bool:
     if not requested_days:
         return True
@@ -235,6 +292,23 @@ def _has_requested_day_content(report: Report, requested_days: set[int]) -> bool
         _items_for_requested_days(structured.get(field), requested_days)
         for field in ("completed_work", "planned_work", "weekly_schedule")
     )
+
+
+def _has_requested_date_content(report: Report, query: str) -> bool:
+    structured = report.structured_json or {}
+    return any(
+        _items_for_requested_date(report, structured.get(field), query)
+        for field in ("completed_work", "planned_work", "weekly_schedule")
+    )
+
+
+def _requested_authors(query: str, reports: list[Report]) -> set[str]:
+    compact_query = _compact(query)
+    return {
+        report.author.strip()
+        for report in reports
+        if report.author and len(_compact(report.author)) >= 2 and _compact(report.author) in compact_query
+    }
 
 
 def _requested_month(query: str) -> tuple[int, int] | None:
@@ -372,8 +446,8 @@ def _date_work_summary(query: str, hits: list[SearchHit]) -> str:
     for source_number, hit in enumerate(hits, 1):
         report = hit.report
         structured = report.structured_json or {}
-        completed = _items_for_requested_days(structured.get("completed_work"), requested_days)
-        schedule = _items_for_requested_days(structured.get("weekly_schedule"), requested_days)
+        completed = _items_for_requested_date(report, structured.get("completed_work"), query)
+        schedule = _items_for_requested_date(report, structured.get("weekly_schedule"), query)
         if requested_days and _structured_items(structured.get("completed_work")) and not completed:
             undated_completed_reports += 1
         label = report.author or report.original_filename
@@ -436,20 +510,27 @@ class KnowledgeSearchService:
         vulnerability_findings = _is_vulnerability_findings_query(query)
         weekly_date_query = bool(date_terms) and any(value in query for value in ("업무", "일정", "업무일지")) and "취약점" not in query
         core_terms = [] if date_terms else _core_query_terms(query)
+        reports = self.repository.list(limit=500)
+        requested_authors = _requested_authors(query, reports)
+        requested_calendar_dates = _requested_calendar_dates(query)
         hits: list[SearchHit] = []
-        for report in self.repository.list(limit=500):
+        for report in reports:
             if report.status != ReportStatus.COMPLETED.value:
                 continue
             if vulnerability_findings and not _is_vulnerability_report(report):
                 continue
             if weekly_date_query and not _is_weekly_report(report):
                 continue
+            if requested_authors and (not report.author or report.author.strip() not in requested_authors):
+                continue
             if requested_month and (not report.report_date or (report.report_date.year, report.report_date.month) != requested_month):
+                continue
+            if requested_calendar_dates and not _has_requested_date_content(report, query):
                 continue
             text = _report_text(report)
             matched = [term for term in terms if _matches_term(term, text)]
             matched_meaningful = [term for term in meaningful_terms if _matches_term(term, text)]
-            matched_dates = [
+            matched_dates = date_terms if requested_calendar_dates else [
                 term for term in date_terms
                 if _matches_term(term, text)
                 or (term.endswith("일") and _has_requested_day_content(report, requested_days))
@@ -481,7 +562,7 @@ class KnowledgeSearchService:
         hits = self.retrieve(query, max(limit, 10) if date_query else limit)
         # Keyword/metadata hits are both faster and more precise for internal documents.
         # Use vector search only as a fallback when no concrete match was found.
-        if self.vector_store is not None and not hits:
+        if self.vector_store is not None and not hits and not date_query:
             try:
                 query_vector = (await self.ollama.embed([query]))[0]
                 semantic = self.vector_store.search(query_vector, limit=max(limit * 2, 12))
@@ -524,8 +605,9 @@ class KnowledgeSearchService:
         if _is_vulnerability_findings_query(query):
             return _vulnerability_findings_summary(hits), hits, "vulnerability_summary"
         if date_query:
-            requested_days = _requested_day_numbers(query)
-            if requested_days:
+            if _requested_calendar_dates(query):
+                hits = [hit for hit in hits if _has_requested_date_content(hit.report, query)]
+            elif (requested_days := _requested_day_numbers(query)):
                 hits = [hit for hit in hits if _has_requested_day_content(hit.report, requested_days)]
                 if not hits:
                     return NO_EVIDENCE_ANSWER, [], "no_results"
