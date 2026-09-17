@@ -41,6 +41,14 @@ class EmbeddingOnlyOllama:
         raise AssertionError("근거 점수가 낮으면 LLM 답변 생성을 호출하면 안 됩니다.")
 
 
+class NoModelCallOllama:
+    async def embed(self, _texts):
+        raise AssertionError("정확한 DB 통계 질문은 임베딩을 호출하면 안 됩니다.")
+
+    async def answer_from_sources(self, _question, _context):
+        raise AssertionError("정확한 DB 통계 질문은 LLM을 호출하면 안 됩니다.")
+
+
 class NoEmbeddingForKeywordOllama:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         raise AssertionError("명확한 키워드 검색 결과가 있으면 임베딩을 호출하면 안 됩니다.")
@@ -279,6 +287,53 @@ async def test_date_question_returns_every_matching_report_without_llm(db, setti
 
 
 @pytest.mark.asyncio
+async def test_day_only_question_returns_only_that_days_work_not_the_whole_week(db, settings):
+    repository = ReportRepository(db)
+    for number, day, work in ((1, "월(31)", "월요일 방화벽 점검"), (2, "화(01)", "화요일 NAC 교육")):
+        report = repository.create(
+            original_filename=f"주간업무일지-{number}.pptx", stored_filename=f"day-{number}.pptx",
+            file_path=str(settings.upload_dir / f"day-{number}.pptx"), file_size=10,
+            content_type="application/pptx", source_type="pptx", model_name="test-model",
+            author=f"작성자{number}", report_date=date(2026, 8, 31),
+        )
+        report.status = ReportStatus.COMPLETED.value
+        report.structured_json = {
+            "completed_work": [{"day": day, "work": work}],
+            "weekly_schedule": [{"day": day, "schedule": f"{work} 일정"}],
+        }
+    db.commit()
+
+    answer, hits, mode = await KnowledgeSearchService(db, NoModelCallOllama()).answer("31일 내용 알려줘", 30)
+
+    assert mode == "date_summary"
+    assert len(hits) == 1
+    assert "월요일 방화벽 점검" in answer
+    assert "화요일 NAC 교육" not in answer
+
+
+@pytest.mark.asyncio
+async def test_date_answer_explains_when_completed_work_has_no_day(db, settings):
+    report = ReportRepository(db).create(
+        original_filename="주간업무일지-날짜없음.pptx", stored_filename="undated-work.pptx",
+        file_path=str(settings.upload_dir / "undated-work.pptx"), file_size=10,
+        content_type="application/pptx", source_type="pptx", model_name="test-model",
+        report_date=date(2026, 8, 31),
+    )
+    report.status = ReportStatus.COMPLETED.value
+    report.structured_json = {
+        "completed_work": [{"work": "금주 완료 업무"}],
+        "weekly_schedule": [{"day": "월(31)", "schedule": "31일 주요 일정"}],
+    }
+    db.commit()
+
+    answer, _, mode = await KnowledgeSearchService(db, NoModelCallOllama()).answer("8월 31일 업무 알려줘", 30)
+
+    assert mode == "date_summary"
+    assert "31일 주요 일정" in answer
+    assert "완료 업무는 요일별로 기록되지 않아" in answer
+
+
+@pytest.mark.asyncio
 async def test_last_month_query_excludes_other_months(db, settings, monkeypatch):
     import app.services.knowledge_search_service as search_module
 
@@ -367,3 +422,49 @@ async def test_vulnerability_findings_query_excludes_weekly_tasks_that_only_ment
     assert [hit.report.id for hit in hits] == [finding.id]
     assert "root 로그인을 제한" in answer
     assert "NAC 패치" not in answer
+
+
+@pytest.mark.asyncio
+async def test_weekly_report_count_uses_all_active_database_rows_without_llm(db, settings):
+    repository = ReportRepository(db)
+    created = []
+    for number in range(12):
+        report = repository.create(
+            original_filename=f"주간업무일지-{number}.pptx", stored_filename=f"count-{number}.pptx",
+            file_path=str(settings.upload_dir / f"count-{number}.pptx"), file_size=10,
+            content_type="application/pptx", source_type="pptx", model_name="test-model",
+        )
+        report.status = ReportStatus.COMPLETED.value
+        created.append(report)
+    repository.move_to_trash(created[-1])
+    db.commit()
+
+    answer, hits, mode = await KnowledgeSearchService(db, NoModelCallOllama()).answer("현재 업무일지 몇 개 있냐?", 8)
+
+    assert mode == "inventory"
+    assert answer == "현재 휴지통을 제외한 업무일지는 총 11개입니다."
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_direct_person_fact_question_is_answered_without_llm(db, settings):
+    repository = ReportRepository(db)
+    report = repository.create(
+        original_filename="주간업무일지-김대리.pptx", stored_filename="direct-fact.pptx",
+        file_path=str(settings.upload_dir / "direct-fact.pptx"), file_size=10,
+        content_type="application/pptx", source_type="pptx", model_name="test-model",
+        author="김대리", report_date=date(2026, 9, 14),
+    )
+    report.status = ReportStatus.COMPLETED.value
+    report.extracted_text = "서버 정기 점검과 백업 복구 시험을 완료했다."
+    report.structured_json = {"completed_work": [{"work": "서버 정기 점검과 백업 복구 시험 완료"}]}
+    db.commit()
+
+    answer, hits, mode = await KnowledgeSearchService(db, NoModelCallOllama()).answer(
+        "서버 점검을 완료한 사람과 업무가 뭐야?", 30
+    )
+
+    assert mode == "direct_fact"
+    assert [hit.report.id for hit in hits] == [report.id]
+    assert "김대리" in answer
+    assert "백업 복구 시험 완료" in answer

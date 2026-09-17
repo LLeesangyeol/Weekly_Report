@@ -69,6 +69,10 @@ class Settings:
     rag_chunk_overlap: int = 180
     rag_top_k: int = 12
     rag_min_semantic_score: float = 0.56
+    ollama_num_ctx: int = 4096
+    ollama_num_predict: int = 280
+    ollama_keep_alive: str = "30m"
+    ollama_interactive_timeout_seconds: float = 120.0
 
     @property
     def max_upload_bytes(self) -> int:
@@ -107,4 +111,8 @@ def get_settings() -> Settings:
         rag_chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "180")),
         rag_top_k=int(os.getenv("RAG_TOP_K", "12")),
         rag_min_semantic_score=float(os.getenv("RAG_MIN_SEMANTIC_SCORE", "0.56")),
+        ollama_num_ctx=int(os.getenv("OLLAMA_NUM_CTX", "4096")),
+        ollama_num_predict=int(os.getenv("OLLAMA_NUM_PREDICT", "280")),
+        ollama_keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+        ollama_interactive_timeout_seconds=float(os.getenv("OLLAMA_INTERACTIVE_TIMEOUT_SECONDS", "120")),
     )

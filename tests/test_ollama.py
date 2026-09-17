@@ -38,7 +38,9 @@ async def test_ollama_api_mock(settings):
         calls.append(payload)
         assert payload["stream"] is False
         assert payload["model"] == "test-model"
-        assert payload["options"]["temperature"] == 0.1
+        assert payload["options"]["temperature"] == 0.05
+        assert payload["options"]["num_ctx"] == 4096
+        assert payload["keep_alive"] == "30m"
         assert payload["think"] is False
         assert payload["format"] == "json"
         content = json.dumps(STRUCTURED, ensure_ascii=False)

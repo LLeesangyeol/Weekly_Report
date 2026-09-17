@@ -59,11 +59,13 @@ class ReportRepository:
         statement = statement.order_by(desc(Report.created_at))
         return self.session.scalar(statement)
 
-    def list(self, *, limit: int = 100, offset: int = 0, include_deleted: bool = False) -> list[Report]:
+    def list(self, *, limit: int | None = 100, offset: int = 0, include_deleted: bool = False) -> list[Report]:
         statement = select(Report)
         if not include_deleted:
             statement = statement.where(Report.deleted_at.is_(None))
-        statement = statement.order_by(desc(Report.created_at)).limit(limit).offset(offset)
+        statement = statement.order_by(desc(Report.created_at)).offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
         return list(self.session.scalars(statement))
 
     def search(

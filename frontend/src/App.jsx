@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Archive, Bot, CalendarDays, Check, ChevronRight, Clock3,
+  Archive, Bot, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3,
   Download, File, FileArchive, FileChartColumn, FileSpreadsheet, FileText,
   Folder, FolderOpen, HardDrive, LayoutDashboard, ListFilter, LoaderCircle,
   MessageSquareText, MoreHorizontal, Plus, Search, Send, Settings,
-  ShieldCheck, Sparkles, Trash2, RotateCcw, Upload, Users, X,
+  ShieldCheck, Sparkles, Trash2, RotateCcw, RefreshCw, Upload, Users, X,
 } from 'lucide-react'
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { id: 'ai', label: 'AI 통합검색', icon: Sparkles },
   { id: 'vulnerabilities', label: '취약점 문서함', icon: ShieldCheck },
   { id: 'reports', label: '업무일지', icon: CalendarDays },
+  { id: 'calendar', label: '주요 일정', icon: CalendarDays },
   { id: 'trash', label: '휴지통', icon: Trash2 },
   { id: 'admin', label: '관리', icon: Settings },
 ]
@@ -266,11 +267,64 @@ function TrashArchive({ reports, onOpen, onRestore }) {
   </main>
 }
 
+function dateKey(value) {
+  const year = value.getFullYear(); const month = String(value.getMonth() + 1).padStart(2, '0'); const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function CalendarView({ reports, onOpen }) {
+  const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+  const [events, setEvents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
+  const gridStart = new Date(first); gridStart.setDate(first.getDate() - ((first.getDay() + 6) % 7))
+  const days = Array.from({ length: 42 }, (_, index) => { const value = new Date(gridStart); value.setDate(gridStart.getDate() + index); return value })
+  const gridEnd = days.at(-1)
+  useEffect(() => {
+    const controller = new AbortController(); setLoading(true)
+    fetch(`/api/calendar?start=${dateKey(gridStart)}&end=${dateKey(gridEnd)}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('일정을 불러오지 못했습니다.')))
+      .then(setEvents).catch((error) => { if (error.name !== 'AbortError') setEvents([]) }).finally(() => setLoading(false))
+    return () => controller.abort()
+  }, [cursor, reports])
+  const grouped = useMemo(() => events.reduce((result, event) => {
+    const dayEvents = (result[event.date] ||= [])
+    let person = dayEvents.find((entry) => entry.author === event.author)
+    if (!person) {
+      person = { ...event, schedules: [] }
+      dayEvents.push(person)
+    }
+    if (!person.schedules.includes(event.schedule)) person.schedules.push(event.schedule)
+    return result
+  }, {}), [events])
+  const today = dateKey(new Date())
+  const moveMonth = (amount) => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + amount, 1))
+  return <main className="page calendar-page">
+    <div className="page-heading"><div><p className="eyebrow">TEAM CALENDAR</p><h1>주요 일정</h1><p>업무일지의 주간 일정만 날짜별로 자동 정리합니다.</p></div><button className="secondary today-button" onClick={() => setCursor(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>오늘</button></div>
+    <section className="calendar-card">
+      <div className="calendar-toolbar"><button aria-label="이전 달" onClick={() => moveMonth(-1)}><ChevronLeft size={19} /></button><strong>{cursor.getFullYear()}년 {cursor.getMonth() + 1}월</strong><button aria-label="다음 달" onClick={() => moveMonth(1)}><ChevronRight size={19} /></button><span>{loading ? '일정 불러오는 중' : `${events.length}개 일정`}</span></div>
+      <div className="calendar-weekdays">{['월', '화', '수', '목', '금', '토', '일'].map((day) => <span key={day}>{day}</span>)}</div>
+      <div className="calendar-grid">{days.map((day) => { const key = dateKey(day); const dayEvents = grouped[key] || []; const outside = day.getMonth() !== cursor.getMonth(); return <div className={`calendar-day ${outside ? 'outside' : ''} ${key === today ? 'today' : ''}`} key={key}><div className="calendar-date"><span>{day.getDate()}</span>{key === today && <small>오늘</small>}</div><div className="calendar-events">{dayEvents.map((event) => <button key={`${event.date}-${event.author}`} onClick={() => onOpen(event.report_id)} title={`${event.author} · ${event.schedules.join(', ')}`}><strong>{event.author}</strong><span className="calendar-schedule-list">{event.schedules.map((schedule) => <span key={schedule}>{schedule}</span>)}</span></button>)}</div></div> })}</div>
+    </section>
+  </main>
+}
+
 function DetailDrawer({ id, onClose, onTrash }) {
   const [item, setItem] = useState(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const [previewError, setPreviewError] = useState('')
   useEffect(() => { if (id) fetch(`/api/reports/${id}`).then((r) => r.json()).then(setItem) }, [id])
+  const createPreview = async () => {
+    setPreviewBusy(true); setPreviewError('')
+    try {
+      const response = await fetch(`/api/reports/${id}/preview`, { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.detail || '원문 미리보기를 만들지 못했습니다.')
+      setItem(body)
+    } catch (error) { setPreviewError(error.message) } finally { setPreviewBusy(false) }
+  }
   if (!id) return null
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><span>문서 상세</span><button className="icon-button" onClick={onClose}><X size={20} /></button></div>{!item ? <div className="loading-row"><LoaderCircle className="spin" />불러오는 중</div> : <><div className="drawer-title"><FileGlyph item={item} size="large" /><div><h2>{item.original_filename}</h2><Status value={item.status} /></div></div><dl><div><dt>작성자</dt><dd>{item.author || '-'}</dd></div><div><dt>부서</dt><dd>{item.department || '-'}</dd></div><div><dt>기준일</dt><dd>{item.report_date || '-'}</dd></div><div><dt>파일 크기</dt><dd>{formatBytes(item.file_size)}</dd></div></dl><section className="detail-summary"><div className="detail-summary-head"><div><span>AI 분석 요약</span><small>문서에서 추출한 업무와 일정</small></div><span className="summary-badge">{item.index_status === 'indexed' ? '검색 준비 완료' : '분석 결과'}</span></div>{item.summary ? <SummarySections summary={item.summary} /> : item.status === 'failed' ? <div className="summary-empty error-text">{item.error_message}</div> : <div className="summary-empty">문서 분석이 완료되면 요약이 표시됩니다.</div>}</section>{item.preview_path && <section className="document-preview"><div className="detail-summary-head"><div><span>원문 미리보기</span><small>문서 안의 이미지와 원본 배치를 유지합니다.</small></div></div><iframe title={`${item.original_filename} 원문 미리보기`} src={`/api/reports/${id}/preview#view=FitH&toolbar=0`} /></section>}<a className="download-button" href={`/api/reports/${id}/download`}><Download size={18} />원본 다운로드</a>{!item.deleted_at && <button className="trash-document" onClick={() => onTrash(item.id)}><Trash2 size={16} />휴지통으로 이동</button>}</>}</aside></div>
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><span>문서 상세</span><button className="icon-button" onClick={onClose}><X size={20} /></button></div>{!item ? <div className="loading-row"><LoaderCircle className="spin" />불러오는 중</div> : <><div className="drawer-title"><FileGlyph item={item} size="large" /><div><h2>{item.original_filename}</h2><Status value={item.status} /></div></div><dl><div><dt>작성자</dt><dd>{item.author || '-'}</dd></div><div><dt>부서</dt><dd>{item.department || '-'}</dd></div><div><dt>기준일</dt><dd>{item.report_date || '-'}</dd></div><div><dt>파일 크기</dt><dd>{formatBytes(item.file_size)}</dd></div></dl><section className="detail-summary"><div className="detail-summary-head"><div><span>AI 분석 요약</span><small>문서에서 추출한 업무와 일정</small></div><span className="summary-badge">{item.index_status === 'indexed' ? '검색 준비 완료' : '분석 결과'}</span></div>{item.summary ? <SummarySections summary={item.summary} /> : item.status === 'failed' ? <div className="summary-empty error-text">{item.error_message}</div> : <div className="summary-empty">문서 분석이 완료되면 요약이 표시됩니다.</div>}</section>{item.preview_path ? <section className="document-preview"><div className="detail-summary-head"><div><span>원문 미리보기</span><small>문서 전체 페이지와 이미지·표 배치를 표시합니다.</small></div></div><iframe title={`${item.original_filename} 원문 미리보기`} src={`/api/reports/${id}/preview#view=FitH&toolbar=0`} /></section> : <section className="preview-unavailable"><strong>원문 미리보기가 아직 준비되지 않았습니다.</strong><p>HWP를 PDF로 변환해 전체 페이지를 표시합니다. AI 검색·분석은 다시 실행하지 않습니다.</p><button className="secondary" onClick={createPreview} disabled={previewBusy}>{previewBusy ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}{previewBusy ? '미리보기 생성 중' : '원문 미리보기 생성'}</button>{previewError && <p className="form-error">{previewError}</p>}</section>}<a className="download-button" href={`/api/reports/${id}/download`}><Download size={18} />원본 다운로드</a>{!item.deleted_at && <button className="trash-document" onClick={() => onTrash(item.id)}><Trash2 size={16} />휴지통으로 이동</button>}</>}</aside></div>
 }
 
 export default function App() {
@@ -316,7 +370,7 @@ export default function App() {
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}><div className="brand"><img src="/tein-logo.png" alt="TEIN" /><span>SYSTEM</span></div><nav>{navItems.map(({ id, label, icon: Icon }) => <button className={active === id ? 'active' : ''} key={id} onClick={() => navigate(id)}><Icon size={19} />{label}{id === 'ai' && <span className="ai-tag">AI</span>}</button>)}</nav></aside>
     <div className="workspace">
       {active === 'library' && <Library reports={reports} loading={loading} query={query} setQuery={setQuery} onSearch={(e) => { e.preventDefault(); loadReports(query) }} onUpload={() => setUploadOpen(true)} onOpen={setDetailId} onTrash={moveToTrash} />}
-      {active === 'ai' && <AiSearch onOpen={setDetailId} />}{active === 'vulnerabilities' && <VulnerabilityArchive reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'reports' && <Reports reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'trash' && <TrashArchive reports={trash} onOpen={setDetailId} onRestore={restoreFromTrash} />}{active === 'admin' && <Admin reports={reports} />}
+      {active === 'ai' && <AiSearch onOpen={setDetailId} />}{active === 'vulnerabilities' && <VulnerabilityArchive reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'reports' && <Reports reports={reports} onOpen={setDetailId} onUpload={() => setUploadOpen(true)} />}{active === 'calendar' && <CalendarView reports={reports} onOpen={setDetailId} />}{active === 'trash' && <TrashArchive reports={trash} onOpen={setDetailId} onRestore={restoreFromTrash} />}{active === 'admin' && <Admin reports={reports} />}
     </div>
     <UploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} onComplete={(body) => { setUploadOpen(false); setToast(`${body.reports.length}개 문서 업로드를 시작했습니다.`); loadReports() }} />
     <DetailDrawer id={detailId} onClose={() => setDetailId(null)} onTrash={moveToTrash} />{toast && <div className="toast"><Check size={18} />{toast}</div>}

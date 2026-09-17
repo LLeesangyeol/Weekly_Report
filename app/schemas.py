@@ -100,6 +100,15 @@ class ReportStatusRead(BaseModel):
     error_message: str | None = None
 
 
+class CalendarEventRead(BaseModel):
+    report_id: int
+    date: date
+    author: str
+    department: str | None = None
+    schedule: str
+    original_filename: str
+
+
 class ReportCreated(BaseModel):
     id: int
     status: str
@@ -120,7 +129,7 @@ class BatchCreated(BaseModel):
 
 class KnowledgeSearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=500)
-    limit: int = Field(default=8, ge=1, le=20)
+    limit: int = Field(default=30, ge=1, le=100)
 
 
 class ChatTurn(BaseModel):
@@ -141,7 +150,6 @@ class KnowledgeSource(BaseModel):
     report_date: date | None = None
     author: str | None = None
     page_number: int | None = None
-    heading: str | None = None
     heading: str | None = None
 
 

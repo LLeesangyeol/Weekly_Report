@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated
 from uuid import uuid4
 
@@ -16,17 +18,32 @@ from app.models import DocumentChunk, Report
 from app.repositories.report_repository import ReportRepository
 from app.schemas import (
     BatchCreated, BatchReportCreated, GeneralChatRequest, KnowledgeSearchRequest, KnowledgeSearchResponse,
-    KnowledgeSource, ReportCreated, ReportListItem, ReportRead, ReportStatusRead,
+    CalendarEventRead, KnowledgeSource, ReportCreated, ReportListItem, ReportRead, ReportStatusRead,
 )
 from app.services.knowledge_search_service import KnowledgeSearchService
-from app.services.ollama_service import OllamaService
+from app.services.ollama_service import OllamaError, OllamaService
 from app.services.vector_store_service import get_vector_store
 import httpx
 from app.services.report_service import ReportProcessor
+from app.services.document_preview_service import DocumentPreviewService, PreviewError
 from app.services.storage_service import InsufficientStorageError, StorageService, UploadValidationError
+from app.services.calendar_service import calendar_events
 
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
+
+
+@router.get("/calendar", response_model=list[CalendarEventRead])
+def get_calendar_events(
+    start: date | None = Query(default=None),
+    end: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="캘린더 조회 시작일은 종료일보다 늦을 수 없습니다.")
+    reports = ReportRepository(db).list(limit=None)
+    return calendar_events(reports, start=start, end=end)
 
 
 def get_report_processor(settings: Settings = Depends(get_settings)) -> ReportProcessor:
@@ -71,6 +88,7 @@ async def search_knowledge(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeSearchResponse:
+    started = perf_counter()
     answer, hits, mode = await KnowledgeSearchService(
         db,
         OllamaService(settings),
@@ -79,7 +97,7 @@ async def search_knowledge(
     ).answer(
         request.query, request.limit
     )
-    return KnowledgeSearchResponse(
+    result = KnowledgeSearchResponse(
         answer=answer,
         mode=mode,
         sources=[
@@ -96,6 +114,11 @@ async def search_knowledge(
             for hit in hits
         ],
     )
+    logger.info(
+        "Knowledge search completed mode=%s sources=%d duration_ms=%d",
+        mode, len(hits), round((perf_counter() - started) * 1000),
+    )
+    return result
 
 
 @router.post("/ai/chat", response_model=KnowledgeSearchResponse)
@@ -103,10 +126,13 @@ async def general_chat(
     request: GeneralChatRequest,
     settings: Settings = Depends(get_settings),
 ) -> KnowledgeSearchResponse:
-    answer = await OllamaService(settings).general_chat(
-        request.message,
-        [turn.model_dump() for turn in request.history],
-    )
+    try:
+        answer = await OllamaService(settings).general_chat(
+            request.message,
+            [turn.model_dump() for turn in request.history],
+        )
+    except OllamaError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return KnowledgeSearchResponse(answer=answer, mode="chat", sources=[])
 
 
@@ -395,7 +421,31 @@ def preview_report(report_id: int, db: Session = Depends(get_db), settings: Sett
         path = StorageService(settings).safe_download_path(report.preview_path)
     except (PermissionError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail="문서 미리보기를 찾을 수 없습니다.") from exc
-    return FileResponse(path, media_type="application/pdf", filename=f"{report.original_filename}.pdf")
+    # `filename=` makes Starlette send Content-Disposition: attachment, which
+    # causes browsers to download instead of rendering the PDF inside the detail drawer.
+    return FileResponse(path, media_type="application/pdf", headers={"Content-Disposition": "inline"})
+
+
+@router.post("/reports/{report_id}/preview", response_model=ReportRead)
+def create_report_preview(
+    report_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Report:
+    """Create or retry the full-document PDF preview without re-running AI indexing."""
+    report = ReportRepository(db).get(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="보고서를 찾을 수 없습니다.")
+    try:
+        report.preview_path = str(DocumentPreviewService(settings).create(Path(report.file_path), report.id))
+        db.commit()
+        db.refresh(report)
+        return report
+    except PreviewError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="원본 미리보기를 만들지 못했습니다. 서버의 LibreOffice 설정 또는 해당 HWP 파일 호환성을 확인하세요.",
+        ) from exc
 
 
 @router.get("/health")

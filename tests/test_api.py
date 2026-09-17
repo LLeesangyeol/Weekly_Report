@@ -91,6 +91,42 @@ def test_get_missing_report_returns_404(client):
     assert client.get("/api/reports/999999").status_code == 404
 
 
+def test_preview_returns_inline_pdf_instead_of_download(client, session_factory, settings):
+    preview = settings.upload_dir / "previews" / "preview-test.pdf"
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    preview.write_bytes(b"%PDF-1.7\n")
+    with session_factory() as session:
+        report = ReportRepository(session).create(
+            original_filename="preview.pdf", stored_filename="preview-source.pdf",
+            file_path=str(preview), file_size=10, content_type="application/pdf",
+            source_type="pdf", model_name="test-model",
+        )
+        report.preview_path = str(preview)
+        session.commit()
+        report_id = report.id
+
+    response = client.get(f"/api/reports/{report_id}/preview")
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == "inline"
+
+
+def test_create_preview_returns_clear_error_when_converter_is_unavailable(client, session_factory, settings, monkeypatch):
+    source = settings.upload_dir / "source.hwp"
+    source.write_bytes(bytes.fromhex("D0CF11E0A1B11AE1") + b"test")
+    with session_factory() as session:
+        report = ReportRepository(session).create(
+            original_filename="source.hwp", stored_filename="source.hwp", file_path=str(source), file_size=12,
+            content_type="application/x-hwp", source_type="hwp", model_name="test-model",
+        )
+        report_id = report.id
+
+    from app.services.document_preview_service import PreviewError
+    monkeypatch.setattr("app.routers.api.DocumentPreviewService.create", lambda *_: (_ for _ in ()).throw(PreviewError("missing")))
+    response = client.post(f"/api/reports/{report_id}/preview")
+    assert response.status_code == 422
+    assert "LibreOffice" in response.json()["detail"]
+
+
 def test_disguised_upload_returns_400(client):
     response = client.post(
         "/api/reports",

@@ -15,17 +15,23 @@ from app.services.vector_store_service import VectorStoreService
 
 
 STOP_WORDS = {
-    "알려줘", "보여줘", "정리해줘", "요약해줘", "뭐", "무엇", "어떤", "관련", "대한",
+    "알려줘", "보여줘", "정리해줘", "요약해줘", "뭐", "무엇", "어떤", "관련", "관련된", "대한",
     "있었냐", "있었어", "나온거", "나온", "여태까지", "지금까지", "문서", "내용", "해줘",
     "업무", "일정", "주요", "진행", "진행된", "진행한", "확인", "정리", "요약",
     "지난달", "이번달", "전달", "금월", "지난주", "이번주", "금주",
+    "현재", "지금", "전체", "총", "몇개", "몇건", "몇", "개수", "건수", "있는지", "있냐", "있나요",
+    "했어", "했냐", "했나요", "하는지", "알고싶어", "궁금해",
+    "누가", "누구", "사람", "발견된", "발견한", "날짜별", "날짜별로",
+    "뭐야", "뭔가", "완료한", "완료된", "완료했는지",
 }
 
 NO_EVIDENCE_ANSWER = "업로드된 문서에서 질문과 관련된 정보를 찾을 수 없습니다."
 KOREAN_PARTICLE_SUFFIXES = ("으로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다", "와", "과", "은", "는", "이", "가", "을", "를", "의", "에", "도")
 LOOKUP_GENERIC_TERMS = {"문서", "파일", "업무일지", "주간업무일지", "작성", "작성한", "작성자", "찾아", "찾아줘", "찾기", "목록"}
 SEARCH_ALIASES = {
-    "취약점": ("보안", "보안문제", "보안이슈", "cve"),
+    # Generic "보안" appears in many unrelated weekly tasks, so do not expand
+    # a precise vulnerability query into that broad term.
+    "취약점": ("보안취약점", "보안문제", "보안이슈", "cve", "vulnerability"),
     "보안": ("취약점", "cve", "보안문제", "보안이슈"),
     "휴가": ("연차", "반차", "휴무"),
     "연차": ("휴가", "반차", "휴무"),
@@ -69,15 +75,77 @@ def _expanded_search_terms(query: str) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
+def _core_query_terms(query: str) -> list[str]:
+    """Return user concepts without aliases or grammatical particles."""
+    values = re.findall(r"[가-힣A-Za-z0-9_.-]{2,}", query.casefold())
+    terms: list[str] = []
+    for value in values:
+        normalized = value
+        if re.fullmatch(r"[가-힣]+", value):
+            for suffix in KOREAN_PARTICLE_SUFFIXES:
+                if value.endswith(suffix) and len(value) - len(suffix) >= 2:
+                    normalized = value[:-len(suffix)]
+                    break
+        if normalized in STOP_WORDS or normalized in LOOKUP_GENERIC_TERMS or normalized.isdigit():
+            continue
+        terms.append(normalized)
+    return list(dict.fromkeys(terms))
+
+
 def _meaningful_terms(query: str) -> list[str]:
     return [
         term for term in _expanded_search_terms(query)
-        if term not in STOP_WORDS and term not in _date_terms(query) and not term.isdigit()
+        if term not in STOP_WORDS
+        and term not in LOOKUP_GENERIC_TERMS
+        and term not in _date_terms(query)
+        and not term.isdigit()
     ]
 
 
 def _is_summary_query(query: str) -> bool:
     return any(value in query for value in ("요약", "정리", "묶어", "현황", "무엇을 했"))
+
+
+def _is_direct_fact_query(query: str) -> bool:
+    return any(value in query for value in (
+        "누가", "누구", "언제", "어디", "어느", "무엇", "뭐", "사람", "담당자", "작성자",
+    ))
+
+
+def _is_inventory_query(query: str) -> bool:
+    compact = re.sub(r"\s+", "", query.casefold())
+    count_words = ("몇개", "몇건", "개수", "건수", "총몇", "몇명이", "몇명")
+    status_summary = "현황" in compact and any(
+        value in compact for value in ("업무일지", "전체문서", "문서함", "색인", "검색준비")
+    )
+    return any(word in compact for word in count_words) or status_summary
+
+
+def _is_weekly_report(report: Report) -> bool:
+    # Match the product's 업무일지 tab classification exactly.
+    return report.source_type.casefold() in {"ppt", "pptx"}
+
+
+def _inventory_answer(query: str, reports: list[Report], trashed: list[Report]) -> str:
+    compact = re.sub(r"\s+", "", query.casefold())
+    if "휴지통" in compact:
+        return f"현재 휴지통에는 문서가 총 {len(trashed)}개 있습니다."
+    if "작성자" in compact or "몇명" in compact:
+        authors = sorted({report.author.strip() for report in reports if report.author and _is_weekly_report(report)})
+        return f"현재 업무일지 작성자는 총 {len(authors)}명입니다." + (f"\n\n- {', '.join(authors)}" if authors else "")
+    if "취약점" in compact:
+        count = sum(_is_vulnerability_report(report) for report in reports)
+        return f"현재 휴지통을 제외한 취약점 문서는 총 {count}개입니다."
+    if "업무일지" in compact or "주간일지" in compact:
+        count = sum(_is_weekly_report(report) for report in reports)
+        return f"현재 휴지통을 제외한 업무일지는 총 {count}개입니다."
+    if "색인" in compact or "검색준비" in compact:
+        count = sum(report.index_status == "indexed" for report in reports)
+        return f"현재 AI 검색 준비가 완료된 문서는 총 {count}개입니다. 전체 문서는 {len(reports)}개입니다."
+    if "실패" in compact or "오류" in compact:
+        count = sum(report.status == "failed" or report.index_status == "failed" for report in reports)
+        return f"현재 처리 또는 색인에 실패한 문서는 총 {count}개입니다."
+    return f"현재 휴지통을 제외한 전체 문서는 총 {len(reports)}개입니다."
 
 
 def _is_vulnerability_findings_query(query: str) -> bool:
@@ -108,7 +176,10 @@ def _matches_term(term: str, text: str) -> bool:
 
 
 def _is_document_lookup_query(query: str) -> bool:
-    return any(value in query for value in ("찾아", "찾기", "목록", "문서", "파일", "작성한", "작성자"))
+    explicit = any(value in query for value in ("찾아", "찾기", "목록", "작성한", "작성자"))
+    file_list = any(value in query for value in ("문서", "파일")) and "보여" in query
+    weekly_list = "업무일지" in query and any(value in query for value in ("보여", "목록", "찾아"))
+    return explicit or file_list or weekly_list
 
 
 def _is_author_lookup_query(query: str) -> bool:
@@ -122,10 +193,48 @@ def _specific_lookup_terms(query: str) -> list[str]:
 def _date_terms(query: str) -> list[str]:
     result: list[str] = []
     for month, day in re.findall(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", query):
-        result.extend((f"{int(month)}월 {int(day)}일", f"{int(month):02d}-{int(day):02d}"))
+        result.extend((f"{int(month)}월 {int(day)}일", f"{int(month):02d}-{int(day):02d}", f"{int(day)}일"))
+    # Weekly reports commonly label a row as 월(31), so accept a day-only question too.
+    for day in re.findall(r"(?<!\d)(\d{1,2})\s*일", query):
+        result.append(f"{int(day)}일")
     iso = re.findall(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}", query)
     result.extend(value.replace(".", "-").replace("/", "-") for value in iso)
     return result
+
+
+def _requested_day_numbers(query: str) -> set[int]:
+    values = re.findall(r"(?<!\d)(\d{1,2})\s*일", query)
+    return {int(value) for value in values if 1 <= int(value) <= 31}
+
+
+def _day_matches(value: object, requested_days: set[int]) -> bool:
+    if not requested_days or not value:
+        return False
+    text = str(value)
+    numbers = {int(number) for number in re.findall(r"(?<!\d)(\d{1,2})(?!\d)", text)}
+    return bool(numbers & requested_days)
+
+
+def _items_for_requested_days(value: object, requested_days: set[int]) -> list[str]:
+    if not requested_days:
+        return _structured_items(value)
+    if not isinstance(value, list):
+        return []
+    filtered: list[str] = []
+    for item in value:
+        if isinstance(item, dict) and _day_matches(item.get("day"), requested_days):
+            filtered.extend(_structured_items([item]))
+    return filtered
+
+
+def _has_requested_day_content(report: Report, requested_days: set[int]) -> bool:
+    if not requested_days:
+        return True
+    structured = report.structured_json or {}
+    return any(
+        _items_for_requested_days(structured.get(field), requested_days)
+        for field in ("completed_work", "planned_work", "weekly_schedule")
+    )
 
 
 def _requested_month(query: str) -> tuple[int, int] | None:
@@ -197,6 +306,30 @@ def _evidence_fallback(query: str, hits: list[SearchHit]) -> str:
     return "\n".join(lines)
 
 
+def _direct_fact_answer(query: str, hits: list[SearchHit]) -> str:
+    terms = _core_query_terms(query)
+    lines = [f"문서에서 직접 확인된 결과 {len(hits)}건입니다."]
+    for source_number, hit in enumerate(hits, 1):
+        report = hit.report
+        label = report.author or report.original_filename
+        if report.report_date:
+            label += f" · {report.report_date.isoformat()}"
+        structured = report.structured_json or {}
+        candidates: list[str] = []
+        for field in ("completed_work", "planned_work", "weekly_schedule"):
+            candidates.extend(_structured_items(structured.get(field)))
+        matching = [
+            item for item in candidates
+            if not terms or any(
+                _matches_term(variant, item)
+                for term in terms for variant in (term, *SEARCH_ALIASES.get(term, ()))
+            )
+        ]
+        evidence = " / ".join(matching[:2]) if matching else _snippet(hit.snippet, terms, length=300)
+        lines.append(f"- {label}: {evidence} [문서 {source_number}]")
+    return "\n".join(lines)
+
+
 def _personal_leave_fallback(query: str, hits: list[SearchHit]) -> tuple[str, list[SearchHit]] | None:
     asks_for_person = any(value in query for value in ("누가", "누구", "사람", "작성자"))
     asks_for_leave = any(value in query for value in ("휴가", "연차", "반차", "휴무"))
@@ -233,12 +366,16 @@ def _structured_items(value: object) -> list[str]:
 def _date_work_summary(query: str, hits: list[SearchHit]) -> str:
     """Return every matching report deterministically; small models often cite only one source."""
     date_label = _date_terms(query)[0] if _date_terms(query) else "해당 날짜"
+    requested_days = _requested_day_numbers(query)
     lines = [f"{date_label} 관련 업무일지 {len(hits)}개를 확인했습니다."]
+    undated_completed_reports = 0
     for source_number, hit in enumerate(hits, 1):
         report = hit.report
         structured = report.structured_json or {}
-        completed = _structured_items(structured.get("completed_work"))
-        schedule = _structured_items(structured.get("weekly_schedule"))
+        completed = _items_for_requested_days(structured.get("completed_work"), requested_days)
+        schedule = _items_for_requested_days(structured.get("weekly_schedule"), requested_days)
+        if requested_days and _structured_items(structured.get("completed_work")) and not completed:
+            undated_completed_reports += 1
         label = report.author or report.original_filename
         if report.department:
             label = f"{label} · {report.department}"
@@ -249,6 +386,11 @@ def _date_work_summary(query: str, hits: list[SearchHit]) -> str:
             lines.append(f"- 주요 일정: {' / '.join(schedule)} [문서 {source_number}]")
         if not completed and not schedule:
             lines.append(f"- 문서 내용: {hit.snippet} [문서 {source_number}]")
+    if undated_completed_reports:
+        lines.append(
+            f"\n※ {undated_completed_reports}개 업무일지의 완료 업무는 요일별로 기록되지 않아 "
+            f"{date_label} 업무로 단정하지 않고 제외했습니다."
+        )
     return "\n".join(lines)
 
 
@@ -289,30 +431,52 @@ class KnowledgeSearchService:
         terms = _expanded_search_terms(query)
         meaningful_terms = _meaningful_terms(query)
         date_terms = _date_terms(query)
+        requested_days = _requested_day_numbers(query)
         requested_month = _requested_month(query)
         vulnerability_findings = _is_vulnerability_findings_query(query)
+        weekly_date_query = bool(date_terms) and any(value in query for value in ("업무", "일정", "업무일지")) and "취약점" not in query
+        core_terms = [] if date_terms else _core_query_terms(query)
         hits: list[SearchHit] = []
         for report in self.repository.list(limit=500):
             if report.status != ReportStatus.COMPLETED.value:
                 continue
             if vulnerability_findings and not _is_vulnerability_report(report):
                 continue
+            if weekly_date_query and not _is_weekly_report(report):
+                continue
             if requested_month and (not report.report_date or (report.report_date.year, report.report_date.month) != requested_month):
                 continue
             text = _report_text(report)
             matched = [term for term in terms if _matches_term(term, text)]
             matched_meaningful = [term for term in meaningful_terms if _matches_term(term, text)]
-            matched_dates = [term for term in date_terms if _matches_term(term, text)]
+            matched_dates = [
+                term for term in date_terms
+                if _matches_term(term, text)
+                or (term.endswith("일") and _has_requested_day_content(report, requested_days))
+            ]
+            matched_core = [
+                term for term in core_terms
+                if any(_matches_term(variant, text) for variant in (term, *SEARCH_ALIASES.get(term, ())))
+            ]
+            minimum_core_matches = 1 if len(core_terms) <= 1 else (len(core_terms) * 2 + 2) // 3
+            if core_terms and len(matched_core) < minimum_core_matches:
+                continue
             if meaningful_terms and not date_terms and not matched_meaningful:
                 continue
             if not matched and not matched_dates:
                 continue
-            score = sum(3 if _matches_term(term, report.original_filename) else 1 for term in matched_meaningful)
+            score = sum(5 if _matches_term(term, report.original_filename) else 2 for term in matched_core)
+            score += sum(2 if _matches_term(term, report.original_filename) else 1 for term in matched_meaningful)
             score += len(matched_dates) * 2
             hits.append(SearchHit(report, _snippet(text, matched + matched_dates), float(score)))
         return sorted(hits, key=lambda hit: (hit.score, hit.report.created_at), reverse=True)[:limit]
 
     async def answer(self, query: str, limit: int) -> tuple[str, list[SearchHit], str]:
+        all_reports = self.repository.list(limit=None, include_deleted=True)
+        active_reports = [report for report in all_reports if report.deleted_at is None]
+        trashed_reports = [report for report in all_reports if report.deleted_at is not None]
+        if _is_inventory_query(query):
+            return _inventory_answer(query, active_reports, trashed_reports), [], "inventory"
         date_query = bool(_date_terms(query))
         hits = self.retrieve(query, max(limit, 10) if date_query else limit)
         # Keyword/metadata hits are both faster and more precise for internal documents.
@@ -326,7 +490,7 @@ class KnowledgeSearchService:
                     if item.score < self.min_semantic_score:
                         continue
                     report = self.repository.get(item.report_id)
-                    if report is None:
+                    if report is None or report.deleted_at is not None or report.status != ReportStatus.COMPLETED.value:
                         continue
                     dates = _date_terms(query)
                     if dates and not any(value.casefold() in _report_text(report).casefold() for value in dates):
@@ -360,10 +524,17 @@ class KnowledgeSearchService:
         if _is_vulnerability_findings_query(query):
             return _vulnerability_findings_summary(hits), hits, "vulnerability_summary"
         if date_query:
+            requested_days = _requested_day_numbers(query)
+            if requested_days:
+                hits = [hit for hit in hits if _has_requested_day_content(hit.report, requested_days)]
+                if not hits:
+                    return NO_EVIDENCE_ANSWER, [], "no_results"
             return _date_work_summary(query, hits), hits, "date_summary"
         personal_leave = _personal_leave_fallback(query, hits)
         if personal_leave:
             return personal_leave[0], personal_leave[1], "search"
+        if _is_direct_fact_query(query):
+            return _direct_fact_answer(query, hits), hits, "direct_fact"
         if _is_document_lookup_query(query):
             lines = [f"질문과 일치하는 문서 {len(hits)}개를 찾았습니다."]
             for hit in hits:
@@ -377,11 +548,11 @@ class KnowledgeSearchService:
             return "\n".join(lines), hits, "search"
         if _is_summary_query(query) and _meaningful_terms(query):
             return _evidence_fallback(query, hits), hits, "structured_summary"
-        llm_hits = hits[:5]
+        llm_hits = hits[:6]
         context = "\n\n".join(
             f"[문서 {index}] {hit.report.original_filename}\n"
             f"작성자: {hit.report.author or '-'}\n부서: {hit.report.department or '-'}\n"
-            f"기준일: {hit.report.report_date or '-'}\n{hit.snippet}"
+            f"기준일: {hit.report.report_date or '-'}\n{hit.snippet[:460]}"
             for index, hit in enumerate(llm_hits, 1)
         )
         try:
@@ -397,10 +568,8 @@ class KnowledgeSearchService:
                     return fallback[0], fallback[1], "search_fallback"
                 return _evidence_fallback(query, hits), hits, "search_fallback"
             if not citations:
-                answer = answer.rstrip() + "\n\n근거 문서: " + ", ".join(
-                    f"[문서 {index}]" for index in range(1, min(len(hits), 5) + 1)
-                )
-                return answer, hits[:5], "llm"
+                # Never attach arbitrary citations to an unsupported model claim.
+                return _evidence_fallback(query, hits), hits, "search_fallback"
             if any(number < 1 or number > len(llm_hits) for number in citations):
                 return _evidence_fallback(query, hits), hits, "search_fallback"
             cited_hits = [llm_hits[number - 1] for number in dict.fromkeys(citations)]

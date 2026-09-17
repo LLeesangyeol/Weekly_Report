@@ -15,8 +15,8 @@ from app.repositories.report_repository import ReportRepository
 from app.services.document_service import DocumentService
 from app.services.ollama_service import OllamaService
 from app.services.weekly_template_service import parse_weekly_report_template
-from app.services.vulnerability_summary_service import summarize_vulnerability_report
 from app.services.document_preview_service import DocumentPreviewService, PreviewError
+from app.services.document_summary_service import summarize_structured_document
 from app.services.chunking_service import chunk_document
 from app.services.vector_store_service import get_vector_store
 
@@ -67,9 +67,8 @@ class ReportProcessor:
                 extracted = self.document_service.extract(Path(report.file_path))
                 structured = parse_weekly_report_template(extracted)
                 if structured is None:
-                    vulnerability_summary = summarize_vulnerability_report(extracted) if "취약점" in report.original_filename else None
-                    if vulnerability_summary:
-                        summary = vulnerability_summary
+                    if structural_summary := summarize_structured_document(extracted):
+                        summary = structural_summary
                     elif len(extracted) > 180_000:
                         summary = (
                             "대용량 참고 문서입니다. 문서 전체를 검색 인덱스에 등록했으며, "
